@@ -244,23 +244,23 @@ struct ftrace_likely_data {
 			 default: (x)))
 
 /*
- * __signed_scalar_typeof(x) - Declare a signed scalar type, leaving
- *			       non-scalar types unchanged.
+ *
+ * We build this out of a couple of helper macros in a vain attempt to
+ * help you keep your lunch down while reading it.
  */
+#define __pick_scalar_type(x, type, otherwise)					\
+	__builtin_choose_expr(__same_type(x, type), (type)0, otherwise)
 
-#define __scalar_type_to_signed_cases(type)				\
-		unsigned type:	(signed type)0,				\
-		signed type:	(signed type)0
+#define __pick_integer_type(x, type, otherwise)					\
+	__pick_scalar_type(x, unsigned type,					\
+		__pick_scalar_type(x, signed type, otherwise))
 
-#define __signed_scalar_typeof(x) typeof(				\
-		_Generic((x),						\
-			 char:	(signed char)0,				\
-			 __scalar_type_to_signed_cases(char),		\
-			 __scalar_type_to_signed_cases(short),		\
-			 __scalar_type_to_signed_cases(int),		\
-			 __scalar_type_to_signed_cases(long),		\
-			 __scalar_type_to_signed_cases(long long),	\
-			 default: (x)))
+#define __unqual_scalar_typeof(x) typeof(					\
+	__pick_integer_type(x, char,						\
+		__pick_integer_type(x, short,					\
+			__pick_integer_type(x, int,				\
+				__pick_integer_type(x, long,			\
+					__pick_integer_type(x, long long, x))))))
 
 /* Is this type a native word size -- useful for atomic operations */
 #define __native_word(t) \
