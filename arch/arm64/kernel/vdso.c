@@ -176,26 +176,32 @@ static int aarch32_vdso_mremap(const struct vm_special_mapping *sm,
 	return __vdso_remap(VDSO_ABI_AA32, sm, new_vma);
 }
 
-enum aarch32_map {
-	AA32_MAP_VECTORS, /* kuser helpers */
-	AA32_MAP_SIGPAGE,
-	AA32_MAP_VVAR,
-	AA32_MAP_VDSO,
-};
+/*
+ * aarch32_vdso_pages:
+ * 0 - kuser helpers
+ * 1 - sigreturn code
+ * or (CONFIG_COMPAT_VDSO):
+ * 0 - kuser helpers
+ * 1 - vdso data
+ * 2 - vdso code
+ */
+#define C_VECTORS	0
+#ifdef CONFIG_COMPAT_VDSO
+#define C_VVAR		1
+#define C_VDSO		2
+#define C_PAGES		(C_VDSO + 1)
+#else
+#define C_SIGPAGE	1
+#define C_PAGES		(C_SIGPAGE + 1)
+#endif /* CONFIG_COMPAT_VDSO */
 
 static struct page *aarch32_vectors_page __ro_after_init;
+#ifndef CONFIG_COMPAT_VDSO
 static struct page *aarch32_sig_page __ro_after_init;
+#endif
 
-static int aarch32_sigpage_mremap(const struct vm_special_mapping *sm,
-				  struct vm_area_struct *new_vma)
-{
-	current->mm->context.sigpage = (void *)new_vma->vm_start;
-
-	return 0;
-}
-
-static struct vm_special_mapping aarch32_vdso_maps[] = {
-	[AA32_MAP_VECTORS] = {
+static struct vm_special_mapping aarch32_vdso_spec[C_PAGES] = {
+	{
 		.name	= "[vectors]", /* ABI */
 		.pages	= &aarch32_vectors_page,
 	},
@@ -211,6 +217,12 @@ static struct vm_special_mapping aarch32_vdso_maps[] = {
 		.name = "[vdso]",
 		.mremap = aarch32_vdso_mremap,
 	},
+#else
+	{
+		.name	= "[sigpage]", /* ABI */
+		.pages	= &aarch32_sig_page,
+	},
+#endif /* CONFIG_COMPAT_VDSO */
 };
 
 static int aarch32_alloc_kuser_vdso_page(void)
@@ -246,18 +258,12 @@ static int aarch32_alloc_sigpage(void)
 	memcpy((void *)sigpage, __aarch32_sigret_code_start, sigret_sz);
 	aarch32_sig_page = virt_to_page(sigpage);
 	flush_dcache_page(aarch32_sig_page);
-	return 0;
-}
 
-static int __aarch32_alloc_vdso_pages(void)
-{
-	if (!IS_ENABLED(CONFIG_COMPAT_VDSO))
-		return 0;
+	ret = aarch32_alloc_kuser_vdso_page();
+	if (ret)
+		free_page(sigpage);
 
-	vdso_info[VDSO_ABI_AA32].dm = &aarch32_vdso_maps[AA32_MAP_VVAR];
-	vdso_info[VDSO_ABI_AA32].cm = &aarch32_vdso_maps[AA32_MAP_VDSO];
-
-	return __vdso_init(VDSO_ABI_AA32);
+	return ret;
 }
 
 static int __init aarch32_alloc_vdso_pages(void)
