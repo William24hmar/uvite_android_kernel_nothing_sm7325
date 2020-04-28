@@ -178,40 +178,27 @@ static int aarch32_vdso_mremap(const struct vm_special_mapping *sm,
 	return __vdso_remap(VDSO_ABI_AA32, sm, new_vma);
 }
 
-/*
- * aarch32_vdso_pages:
- * 0 - kuser helpers
- * 1 - sigreturn code
- * or (CONFIG_COMPAT_VDSO):
- * 0 - kuser helpers
- * 1 - vdso data
- * 2 - vdso code
- */
-#define C_VECTORS	0
+enum aarch32_map {
+	AA32_MAP_VECTORS, /* kuser helpers */
 #ifdef CONFIG_COMPAT_VDSO
-#define C_VVAR		1
-#define C_VDSO		2
-#define C_PAGES		(C_VDSO + 1)
+	AA32_MAP_VVAR,
+	AA32_MAP_VDSO,
 #else
-#define C_SIGPAGE	1
-#define C_PAGES		(C_SIGPAGE + 1)
-#endif /* CONFIG_COMPAT_VDSO */
+	AA32_MAP_SIGPAGE
+#endif
+};
 
 static struct page *aarch32_vectors_page __ro_after_init;
 #ifndef CONFIG_COMPAT_VDSO
 static struct page *aarch32_sig_page __ro_after_init;
 #endif
 
-static struct vm_special_mapping aarch32_vdso_spec[C_PAGES] = {
-	{
+static struct vm_special_mapping aarch32_vdso_maps[] = {
+	[AA32_MAP_VECTORS] = {
 		.name	= "[vectors]", /* ABI */
 		.pages	= &aarch32_vectors_page,
 	},
-	[AA32_MAP_SIGPAGE] = {
-		.name	= "[sigpage]", /* ABI */
-		.pages	= &aarch32_sig_page,
-		.mremap	= aarch32_sigpage_mremap,
-	},
+#ifdef CONFIG_COMPAT_VDSO
 	[AA32_MAP_VVAR] = {
 		.name = "[vvar]",
 	},
@@ -220,7 +207,7 @@ static struct vm_special_mapping aarch32_vdso_spec[C_PAGES] = {
 		.mremap = aarch32_vdso_mremap,
 	},
 #else
-	{
+	[AA32_MAP_SIGPAGE] = {
 		.name	= "[sigpage]", /* ABI */
 		.pages	= &aarch32_sig_page,
 	},
@@ -252,8 +239,8 @@ static int __aarch32_alloc_vdso_pages(void)
 {
 	int ret;
 
-	vdso_info[VDSO_ABI_AA32].dm = &aarch32_vdso_spec[C_VVAR];
-	vdso_info[VDSO_ABI_AA32].cm = &aarch32_vdso_spec[C_VDSO];
+	vdso_info[VDSO_ABI_AA32].dm = &aarch32_vdso_maps[AA32_MAP_VVAR];
+	vdso_info[VDSO_ABI_AA32].cm = &aarch32_vdso_maps[AA32_MAP_VDSO];
 
 	ret = __vdso_init(VDSO_ABI_AA32);
 	if (ret)
@@ -401,8 +388,8 @@ static struct vm_special_mapping aarch64_vdso_maps[] __ro_after_init = {
 
 static int __init vdso_init(void)
 {
-	vdso_info[VDSO_ABI_AA64].dm = &vdso_spec[A_VVAR];
-	vdso_info[VDSO_ABI_AA64].cm = &vdso_spec[A_VDSO];
+	vdso_info[VDSO_ABI_AA64].dm = &aarch64_vdso_maps[AA64_MAP_VVAR];
+	vdso_info[VDSO_ABI_AA64].cm = &aarch64_vdso_maps[AA64_MAP_VDSO];
 
 	return __vdso_init(VDSO_ABI_AA64);
 }
