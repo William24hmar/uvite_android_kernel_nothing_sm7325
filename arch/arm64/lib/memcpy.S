@@ -14,48 +14,37 @@
  * ARMv8-a, AArch64, unaligned accesses.
  *
  */
+	.macro ldrb1 reg, ptr, val
+	ldrb  \reg, [\ptr], \val
+	.endm
 
-#define L(label) .L ## label
+	.macro strb1 reg, ptr, val
+	strb \reg, [\ptr], \val
+	.endm
 
-#define dstin	x0
-#define src	x1
-#define count	x2
-#define dst	x3
-#define srcend	x4
-#define dstend	x5
-#define A_l	x6
-#define A_lw	w6
-#define A_h	x7
-#define B_l	x8
-#define B_lw	w8
-#define B_h	x9
-#define C_l	x10
-#define C_lw	w10
-#define C_h	x11
-#define D_l	x12
-#define D_h	x13
-#define E_l	x14
-#define E_h	x15
-#define F_l	x16
-#define F_h	x17
-#define G_l	count
-#define G_h	dst
-#define H_l	src
-#define H_h	srcend
-#define tmp1	x14
+	.macro ldrh1 reg, ptr, val
+	ldrh  \reg, [\ptr], \val
+	.endm
 
-/* This implementation handles overlaps and supports both memcpy and memmove
-   from a single entry point.  It uses unaligned accesses and branchless
-   sequences to keep the code small, simple and improve performance.
+	.macro strh1 reg, ptr, val
+	strh \reg, [\ptr], \val
+	.endm
 
-   Copies are split into 3 main cases: small copies of up to 32 bytes, medium
-   copies of up to 128 bytes, and large copies.  The overhead of the overlap
-   check is negligible since it is only required for large copies.
+	.macro ldr1 reg, ptr, val
+	ldr \reg, [\ptr], \val
+	.endm
 
-   Large copies use a software pipelined loop processing 64 bytes per iteration.
-   The destination pointer is 16-byte aligned to minimize unaligned accesses.
-   The loop tail is handled by always copying 64 bytes from the end.
-*/
+	.macro str1 reg, ptr, val
+	str \reg, [\ptr], \val
+	.endm
+
+	.macro ldp1 reg1, reg2, ptr, val
+	ldp \reg1, \reg2, [\ptr], \val
+	.endm
+
+	.macro stp1 reg1, reg2, ptr, val
+	stp \reg1, \reg2, [\ptr], \val
+	.endm
 
 SYM_FUNC_START_ALIAS(__memmove)
 SYM_FUNC_START_WEAK_ALIAS_PI(memmove)
