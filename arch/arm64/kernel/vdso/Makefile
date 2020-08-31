@@ -43,7 +43,7 @@ endif
 # Disable gcov profiling for VDSO code
 GCOV_PROFILE := n
 
-extra-y += vdso.lds
+targets += vdso.lds
 CPPFLAGS_vdso.lds += -P -C -U$(ARCH)
 
 # Link rule for the .so file, .lds has to be first
