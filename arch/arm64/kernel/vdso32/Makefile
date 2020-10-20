@@ -13,9 +13,16 @@ ifeq ($(CONFIG_CC_IS_CLANG), y)
 CC_COMPAT_CLANG_FLAGS := --target=$(notdir $(CROSS_COMPILE_COMPAT:%-=%))
 
 CC_COMPAT ?= $(CC)
-CC_COMPAT += --target=arm-linux-gnueabi
+CC_COMPAT += $(CC_COMPAT_CLANG_FLAGS)
+
+ifneq ($(LLVM),)
+LD_COMPAT ?= $(LD)
+else
+LD_COMPAT ?= $(CROSS_COMPILE_COMPAT)ld
+endif
 else
 CC_COMPAT ?= $(CROSS_COMPILE_COMPAT)gcc
+LD_COMPAT ?= $(CROSS_COMPILE_COMPAT)ld
 endif
 
 ifeq ($(CONFIG_LD_IS_LLD), y)
@@ -28,6 +35,8 @@ cc32-option = $(call try-run,\
         $(CC_COMPAT) $(1) -c -x c /dev/null -o "$$TMP",$(1),$(2))
 cc32-disable-warning = $(call try-run,\
 	$(CC_COMPAT) -W$(strip $(1)) -c -x c /dev/null -o "$$TMP",-Wno-$(strip $(1)))
+cc32-as-instr = $(call try-run,\
+	printf "%b\n" "$(1)" | $(CC_COMPAT) $(VDSO_AFLAGS) -c -x assembler -o "$$TMP" -,$(2),$(3))
 
 # We cannot use the global flags to compile the vDSO files, the main reason
 # being that the 32-bit compiler may be older than the main (64-bit) compiler
@@ -102,10 +111,16 @@ endif
 VDSO_AFLAGS := $(VDSO_CAFLAGS)
 VDSO_AFLAGS += -D__ASSEMBLY__
 
+# Check for binutils support for dmb ishld
+dmbinstr := $(call cc32-as-instr,dmb ishld,-DCONFIG_AS_DMB_ISHLD=1)
+
+VDSO_CFLAGS += $(dmbinstr)
+VDSO_AFLAGS += $(dmbinstr)
+
 # From arm vDSO Makefile
 VDSO_LDFLAGS += -Bsymbolic --no-undefined -soname=linux-vdso.so.1
 VDSO_LDFLAGS += -z max-page-size=4096 -z common-page-size=4096
-VDSO_LDFLAGS += -shared --hash-style=sysv --build-id=sha1
+VDSO_LDFLAGS += -nostdlib -shared --hash-style=sysv --build-id=sha1
 
 # Borrow vdsomunge.c from the arm vDSO
 # We have to use a relative path because scripts/Makefile.host prefixes
