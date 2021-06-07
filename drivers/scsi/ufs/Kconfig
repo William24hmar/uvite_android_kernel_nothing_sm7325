@@ -218,3 +218,9 @@ config UFSHID_POC
 	2. auto_hibern8 enable/disable (HCI)
 	3. set flag bDefragOperation
 	4. debug msg enable (default : disable)
+
+config SCSI_SKHPB
+	bool "Activate HPB Host-aware Performance Booster"
+	depends on (SCSI_UFSHCD || SCSI_UFSHCD_QTI)
+	help
+	  Activate or deactive SKHPB driver
