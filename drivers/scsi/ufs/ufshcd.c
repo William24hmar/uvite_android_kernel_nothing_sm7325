@@ -285,6 +285,7 @@ static struct ufs_dev_fix ufs_fixups[] = {
 	UFS_FIX(UFS_VENDOR_SKHYNIX, "H9HQ21AHDMM",
 		SKHPB_QUIRK_PURGE_HINT_INFO_WHEN_SLEEP),
 #endif
+
 	END_FIX
 };
 
@@ -2607,6 +2608,12 @@ static int ufshcd_comp_scsi_upiu(struct ufs_hba *hba, struct ufshcd_lrb *lrbp)
 		ufshcd_prepare_req_desc_hdr(lrbp, &upiu_flags,
 						lrbp->cmd->sc_data_direction);
 		ufshcd_prepare_utp_scsi_cmd_upiu(lrbp, upiu_flags);
+#ifdef CONFIG_SCSI_SKHPB
+		if (hba->skhpb_state == SKHPB_PRESENT &&
+			hba->issue_ioctl == false) {
+			skhpb_prep_fn(hba, lrbp);
+		}
+#endif
 	} else {
 		ret = -EINVAL;
 	}
@@ -3008,11 +3015,7 @@ static inline void ufshcd_init_query(struct ufs_hba *hba,
 	(*request)->upiu_req.selector = selector;
 }
 
-#ifdef CONFIG_SCSI_SKHPB
 int ufshcd_query_flag_retry(struct ufs_hba *hba,
-	enum query_opcode opcode, enum flag_idn idn, u8 index, bool *flag_res)
-#else
-static int ufshcd_query_flag_retry(struct ufs_hba *hba,
 	enum query_opcode opcode, enum flag_idn idn, u8 index, bool *flag_res)
 {
 	int ret;
@@ -4501,7 +4504,7 @@ static int ufshcd_complete_dev_init(struct ufs_hba *hba)
 					QUERY_FLAG_IDN_FDEVICEINIT, 0, &flag_res);
 		if (!flag_res)
 			break;
-		usleep_range(500, 1000);
+		usleep_range(5000, 10000);
 	} while (ktime_before(ktime_get(), timeout));
 
 	if (err) {
@@ -5008,6 +5011,7 @@ static int ufshcd_slave_configure(struct scsi_device *sdev)
 
 	if (ufshcd_is_rpm_autosuspend_allowed(hba))
 		sdev->rpm_autosuspend = 1;
+
 #ifdef CONFIG_SCSI_SKHPB
 	if (hba->dev_info.wmanufacturerid == UFS_VENDOR_SKHYNIX)
 		if (sdev->lun < UFS_UPIU_MAX_GENERAL_LUN)
@@ -5119,6 +5123,12 @@ ufshcd_transfer_rsp_status(struct ufs_hba *hba, struct ufshcd_lrb *lrbp)
 			scsi_status = result & MASK_SCSI_STATUS;
 			result = ufshcd_scsi_cmd_status(lrbp, scsi_status);
 
+
+#ifdef CONFIG_SCSI_SKHPB
+			if (hba->skhpb_state == SKHPB_PRESENT &&
+					scsi_status == SAM_STAT_GOOD)
+				skhpb_rsp_upiu(hba, lrbp);
+#endif
 			/*
 			 * Currently we are only supporting BKOPs exception
 			 * events hence we can ignore BKOPs exception event
@@ -5141,11 +5151,6 @@ ufshcd_transfer_rsp_status(struct ufs_hba *hba, struct ufshcd_lrb *lrbp)
 				if (schedule_work(&hba->eeh_work))
 					pm_runtime_get_noresume(hba->dev);
 			}
-#ifdef CONFIG_SCSI_SKHPB
-			if (hba->skhpb_state == SKHPB_PRESENT &&
-					scsi_status == SAM_STAT_GOOD)
-				skhpb_rsp_upiu(hba, lrbp);
-#endif
 			break;
 		case UPIU_TRANSACTION_REJECT_UPIU:
 			/* TODO: handle Reject UPIU Response */
@@ -6795,10 +6800,10 @@ out:
 	ufshcd_update_reg_hist(&hba->ufs_stats.dev_reset, (u32)err);
 	if (!err) {
 #ifdef CONFIG_SCSI_SKHPB
-	if (hba->skhpb_state == SKHPB_PRESENT)
-		hba->skhpb_state = SKHPB_RESET;
-	schedule_delayed_work(&hba->skhpb_init_work,
-						  msecs_to_jiffies(10));
+		if (hba->skhpb_state == SKHPB_PRESENT)
+			hba->skhpb_state = SKHPB_RESET;
+		schedule_delayed_work(&hba->skhpb_init_work,
+					msecs_to_jiffies(10));
 #endif
 		err = SUCCESS;
 	} else {
@@ -9153,12 +9158,12 @@ static int ufshcd_resume(struct ufs_hba *hba, enum ufs_pm_op pm_op)
 		cancel_delayed_work(&hba->rpm_dev_flush_recheck_work);
 	}
 
-#if defined(CONFIG_UFSFEATURE)
-	ufsf_resume(&hba->ufsf);
-#endif
 #ifdef CONFIG_SCSI_SKHPB
 	if (hba->dev_info.wmanufacturerid == UFS_VENDOR_SKHYNIX)
 	    skhpb_resume(hba);
+#endif
+#if defined(CONFIG_UFSFEATURE)
+	ufsf_resume(&hba->ufsf);
 #endif
 	/* Schedule clock gating in case of no access to UFS device yet */
 	ufshcd_release(hba);
@@ -9417,10 +9422,12 @@ void ufshcd_remove(struct ufs_hba *hba)
 #if defined(CONFIG_UFSFEATURE)
 	ufsf_remove(&hba->ufsf);
 #endif
+
 #ifdef CONFIG_SCSI_SKHPB
 	if (hba->dev_info.wmanufacturerid == UFS_VENDOR_SKHYNIX)
 		skhpb_release(hba, SKHPB_NEED_INIT);
 #endif
+
 	ufs_bsg_remove(hba);
 	ufs_sysfs_remove_nodes(hba->dev);
 	scsi_remove_host(hba->host);
@@ -9694,12 +9701,13 @@ int ufshcd_init(struct ufs_hba *hba, void __iomem *mmio_base, unsigned int irq)
 	 */
 	ufshcd_set_ufs_dev_active(hba);
 
-#if defined(CONFIG_UFSFEATURE)
-	ufsf_set_init_state(&hba->ufsf);
-#endif
 #ifdef CONFIG_SCSI_SKHPB
 	ufshcd_init_hpb(hba);
 #endif
+#if defined(CONFIG_UFSFEATURE)
+	ufsf_set_init_state(&hba->ufsf);
+#endif
+
 	async_schedule(ufshcd_async_scan, hba);
 	ufs_sysfs_add_nodes(hba->dev);
 
