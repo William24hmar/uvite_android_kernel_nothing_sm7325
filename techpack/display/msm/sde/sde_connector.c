@@ -143,6 +143,8 @@ static int sde_backlight_device_update_status(struct backlight_device *bd)
 	/* map UI brightness into driver backlight level with rounding */
 	bl_lvl = mult_frac(brightness, bl_max_level, brightness_max_level);
 
+	display->panel->bl_config.real_bl_level = bl_lvl;
+
 	/*if enable hbm_mode, set brightness to HBM brightness*/
 	if (rm692e5_hbm_flag) {
 		bl_lvl = dsi_display->panel->bl_config.bl_hbm_level;
