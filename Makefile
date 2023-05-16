@@ -822,6 +822,14 @@ KBUILD_CFLAGS	+= -fprofile-use -Wno-coverage-mismatch -Wno-error=coverage-mismat
 KBUILD_CFLAGS	+= $(call cc-disable-warning, missing-profile)
 endif
 
+# Use generated profiles from profiling with CONFIG_PGO_GEN to optimize the kernel
+ifeq ($(CONFIG_PGO_USE),y)
+KBUILD_CFLAGS	+=	-fprofile-use \
+			-fprofile-correction \
+			-fprofile-partial-training \
+			-Wno-error=coverage-mismatch
+endif
+
 # Tell gcc to never replace conditional load with a non-conditional one
 ifdef CONFIG_CC_IS_GCC
 # gcc-10 renamed --param=allow-store-data-races=0 to
