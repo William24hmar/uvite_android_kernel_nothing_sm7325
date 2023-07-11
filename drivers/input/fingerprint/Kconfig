@@ -1,5 +1,21 @@
+# SPDX-License-Identifier: GPL-2.0-only
+#
+# Fingerprint driver configuration
+#
 config GOODIX_FINGERPRINT
 	tristate "generic goodix fingerprint driver"
 	default y
 	help
 	add support for goodix fingerprint driver.
+
+menuconfig INPUT_FINGERPRINT
+        bool "Fingerprint sensors"
+        help
+          Say Y here, and a list of supported fingerprint sensors will be displayed.
+          This option doesn't affect the kernel.
+
+          If unsure, say Y.
+
+if INPUT_FINGERPRINT
+
+endif
