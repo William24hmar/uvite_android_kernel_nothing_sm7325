@@ -18,4 +18,6 @@ menuconfig INPUT_FINGERPRINT
 
 if INPUT_FINGERPRINT
 
+source "drivers/input/fingerprint/fpc/Kconfig"
+
 endif
