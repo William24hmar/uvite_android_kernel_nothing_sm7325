@@ -102,7 +102,7 @@ static void yaml_propval_string(yaml_emitter_t *emitter, char *str, int len)
 
 	/* Make sure the entire string is in the lower 7-bit ascii range */
 	for (i = 0; i < len; i++)
-		assert(isascii(str[i]));
+		assert(isascii((unsigned char)str[i]));
 
 	yaml_scalar_event_initialize(&event, NULL,
 		(const yaml_char_t *)YAML_STR_TAG, (const yaml_char_t*)str,
@@ -140,27 +140,6 @@ static void yaml_propval(yaml_emitter_t *emitter, struct property *prop)
 		(const yaml_char_t *)YAML_SEQ_TAG, 1, YAML_FLOW_SEQUENCE_STYLE);
 	yaml_emitter_emit_or_die(emitter, &event);
 
-	/* Ensure we have a type marker before any phandle */
-	for_each_marker(m) {
-		int last_offset = 0;
-		struct marker *type_m;
-
-		if (m->type >= TYPE_UINT8)
-			last_offset = m->offset;
-
-		if (!(m->next && m->next->type == REF_PHANDLE &&
-		      last_offset < m->next->offset))
-			continue;
-
-		type_m = xmalloc(sizeof(*type_m));
-		type_m->offset = m->next->offset;
-		type_m->type = TYPE_UINT32;
-		type_m->ref = NULL;
-		type_m->next = m->next;
-		m->next = type_m;
-	}
-
-	m = prop->val.markers;
 	for_each_marker(m) {
 		int chunk_len;
 		char *data = &prop->val.val[m->offset];
