@@ -563,6 +563,7 @@ struct mm_struct {
 		} lru_gen;
 #endif /* CONFIG_LRU_GEN */
 
+		ANDROID_KABI_RESERVE(1);
 		ANDROID_VENDOR_DATA(1);
 	} __randomize_layout;
 
