@@ -450,8 +450,7 @@ unsigned long move_page_tables(struct vm_area_struct *vma,
 			if (!new_pud)
 				break;
 			if (move_pgt_entry(NORMAL_PUD, vma, old_addr, new_addr,
-						old_end, old_pud, new_pud,
-						true))
+						old_end, old_pud, new_pud, true))
 				continue;
 		}
 
@@ -471,15 +470,14 @@ unsigned long move_page_tables(struct vm_area_struct *vma,
 			split_huge_pmd(vma, old_pmd, old_addr);
 			if (pmd_trans_unstable(old_pmd))
 				continue;
-			} else if (IS_ENABLED(CONFIG_HAVE_MOVE_PMD) &&
+		} else if (IS_ENABLED(CONFIG_HAVE_MOVE_PMD) &&
 			   extent == PMD_SIZE) {
 			/*
 			 * If the extent is PMD-sized, try to speed the move by
 			 * moving at the PMD level if possible.
 			 */
 			if (move_pgt_entry(NORMAL_PMD, vma, old_addr, new_addr,
-						old_end, old_pmd, new_pmd,
-						true))
+						old_end, old_pmd, new_pmd, true))
 				continue;
 		}
 
