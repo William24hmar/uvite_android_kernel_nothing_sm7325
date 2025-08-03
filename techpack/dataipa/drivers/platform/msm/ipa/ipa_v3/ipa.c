@@ -457,6 +457,7 @@ int ipa_smmu_free_sgt(struct sg_table **out_sgt_ptr)
 }
 EXPORT_SYMBOL(ipa_smmu_free_sgt);
 
+#if IS_ENABLED(CONFIG_DEEPSLEEP) || IS_ENABLED(CONFIG_HIBERNATION)
 /**
  * ipa_pm_notify() - PM notify to listen suspend events
  *
@@ -492,10 +493,10 @@ static int ipa_pm_notify(struct notifier_block *b, unsigned long event, void *p)
 	return NOTIFY_DONE;
 }
 
-
 static struct notifier_block ipa_pm_notifier = {
 	.notifier_call = ipa_pm_notify,
 };
+#endif
 
 static const struct dev_pm_ops ipa_pm_ops = {
 	.suspend_late = ipa3_ap_suspend,
@@ -10250,7 +10251,10 @@ static int __init ipa_module_init(void)
 		return pci_register_driver(&ipa_pci_driver);
 	}
 
+#if IS_ENABLED(CONFIG_DEEPSLEEP) || IS_ENABLED(CONFIG_HIBERNATION)
 	register_pm_notifier(&ipa_pm_notifier);
+#endif
+
 	/* Register as a platform device driver */
 	return platform_driver_register(&ipa_plat_drv);
 }
@@ -10261,7 +10265,9 @@ static void __exit ipa_module_exit(void)
 	if (running_emulation)
 		pci_unregister_driver(&ipa_pci_driver);
 	platform_driver_unregister(&ipa_plat_drv);
+#if IS_ENABLED(CONFIG_DEEPSLEEP) || IS_ENABLED(CONFIG_HIBERNATION)
 	unregister_pm_notifier(&ipa_pm_notifier);
+#endif
 	kfree(ipa3_ctx);
 	ipa3_ctx = NULL;
 }
