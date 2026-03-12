@@ -23,14 +23,14 @@ jobs:
         run: |
           sudo apt-get update -y
           sudo apt-get install -y \
-            bc bison build-essential flex git wget \
+            bc bison build-essential flex git wget xz-utils \
             libssl-dev libelf-dev zlib1g-dev \
             device-tree-compiler cpio zip unzip \
             liblz4-tool zstd python3 \
             default-jre openjdk-21-jdk e2fsprogs \
             binutils make
-          # NOTE: clang / lld / llvm come from Snapdragon Clang 19
-          # which build.sh downloads automatically — no system clang needed.
+          # clang / lld / llvm come from Snapdragon Clang 19
+          # GCC 14.2 AArch64 is downloaded by build.sh automatically
 
       - name: Copy build.sh into kernel source
         run: cp build.sh kernel/build.sh
@@ -43,16 +43,16 @@ jobs:
         working-directory: kernel
         run: ./build.sh
         env:
-          # Non-interactive: build.sh read -t timeouts will auto-select defaults
+          # Non-interactive: build.sh read -t timeouts auto-select defaults
           KBUILD_BUILD_USER: William24hmar
           KBUILD_BUILD_HOST: GitHub-Actions
-          # Force modpost to treat namespace warnings as non-fatal
+          # Treat namespace warnings as non-fatal
           KBUILD_MODPOST_WARN: 1
 
       - name: Collect built artifacts
         run: |
           mkdir -p artifacts
-          # NOTHING_PHONE1_OUT is created one level above kernel/, i.e. at workspace root
+          # NOTHING_PHONE1_OUT is created one level above kernel/ (at workspace root)
           find "${{ github.workspace }}" -name "*.zip" \
             -not -path "*/.git/*" 2>/dev/null | while read f; do
             echo "Found ZIP: $f"
