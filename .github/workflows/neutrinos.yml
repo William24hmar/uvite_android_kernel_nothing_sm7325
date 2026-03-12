@@ -8,53 +8,63 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout repository
+      - name: Checkout workflow files (build.sh etc.)
         uses: actions/checkout@v4
+
+      - name: Checkout kernel source (Nothing Phone 1 — AAOSPA-VX)
+        uses: actions/checkout@v4
+        with:
+          repository: William24hmar/uvite_android_kernel_nothing_sm7325
+          ref: AAOSPA-VX
+          path: kernel
+          fetch-depth: 1
 
       - name: Install build dependencies
         run: |
           sudo apt-get update -y
           sudo apt-get install -y \
-            bc bison build-essential flex git \
-            clang-14 lld-14 llvm-14 llvm-14-dev \
-            gcc-aarch64-linux-gnu gcc-arm-linux-gnueabi \
-            binutils-aarch64-linux-gnu \
+            bc bison build-essential flex git wget \
             libssl-dev libelf-dev zlib1g-dev \
             device-tree-compiler cpio zip unzip \
             liblz4-tool zstd python3 \
-            default-jre openjdk-21-jdk e2fsprogs
-          for tool in nm ar objcopy objdump strip readelf dis; do
-            sudo ln -sf /usr/bin/llvm-$tool-14 /usr/local/bin/llvm-$tool 2>/dev/null || true
-          done
-          sudo ln -sf /usr/bin/clang-14  /usr/local/bin/clang  2>/dev/null || true
-          sudo ln -sf /usr/bin/ld.lld-14 /usr/local/bin/ld.lld 2>/dev/null || true
-          echo "clang: $(clang --version | head -1)"
-          echo "llvm-nm: $(llvm-nm --version | head -1)"
+            default-jre openjdk-21-jdk e2fsprogs \
+            binutils make
+          # NOTE: clang / lld / llvm come from Snapdragon Clang 19
+          # which build.sh downloads automatically — no system clang needed.
+
+      - name: Copy build.sh into kernel source
+        run: cp build.sh kernel/build.sh
 
       - name: Make build.sh executable
+        working-directory: kernel
         run: chmod +x build.sh
 
       - name: Run build.sh
+        working-directory: kernel
         run: ./build.sh
         env:
+          # Non-interactive: build.sh read -t timeouts will auto-select defaults
+          KBUILD_BUILD_USER: William24hmar
+          KBUILD_BUILD_HOST: GitHub-Actions
           # Force modpost to treat namespace warnings as non-fatal
           KBUILD_MODPOST_WARN: 1
 
-      - name: Copy built artifacts into accessible directory
+      - name: Collect built artifacts
         run: |
           mkdir -p artifacts
-          find "$(dirname $GITHUB_WORKSPACE)" -name "*.zip" -not -path "*/.git/*" 2>/dev/null | while read f; do
+          # NOTHING_PHONE1_OUT is created one level above kernel/, i.e. at workspace root
+          find "${{ github.workspace }}" -name "*.zip" \
+            -not -path "*/.git/*" 2>/dev/null | while read f; do
             echo "Found ZIP: $f"
             cp "$f" artifacts/
           done
           echo "--- artifacts/ contents ---"
           ls -lh artifacts/ || echo "artifacts/ is empty"
 
-      - name: Upload ZIP files as artifacts
+      - name: Upload ZIP as GitHub artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Neutrino-zip
+          name: Neutrino-NothingPhone1-${{ github.run_number }}
           path: artifacts/*.zip
           if-no-files-found: warn
-
           
