@@ -23,14 +23,15 @@ jobs:
         run: |
           sudo apt-get update -y
           sudo apt-get install -y \
-            bc bison build-essential flex git wget xz-utils \
+            bc bison build-essential flex git wget curl xz-utils \
             libssl-dev libelf-dev zlib1g-dev \
             device-tree-compiler cpio zip unzip \
             liblz4-tool zstd python3 \
             default-jre openjdk-21-jdk e2fsprogs \
             binutils make
-          # clang / lld / llvm come from Snapdragon Clang 19
-          # GCC 14.2 AArch64 is downloaded by build.sh automatically
+          # clang/lld/llvm come from Snapdragon Clang 19 (downloaded by build.sh)
+          echo "HOME is: $HOME"
+          echo "Toolchains will land at: $HOME/toolchains/"
 
       - name: Copy build.sh into kernel source
         run: cp build.sh kernel/build.sh
@@ -52,9 +53,10 @@ jobs:
       - name: Collect built artifacts
         run: |
           mkdir -p artifacts
-          # NOTHING_PHONE1_OUT is created one level above kernel/ (at workspace root)
-          find "${{ github.workspace }}" -name "*.zip" \
-            -not -path "*/.git/*" 2>/dev/null | while read f; do
+          echo "Searching for ZIPs under $HOME ..."
+          find "$HOME" -name "*.zip" \
+            -not -path "*/.git/*" \
+            -not -path "*/toolchains/*" 2>/dev/null | while read f; do
             echo "Found ZIP: $f"
             cp "$f" artifacts/
           done
