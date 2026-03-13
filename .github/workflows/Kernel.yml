@@ -1,0 +1,259 @@
+name: Uvite Kernel Build CI
+
+on:
+  push:
+    branches:
+      - AAOSPA-VX
+  workflow_dispatch:
+
+env:
+  BOT_MSG_URL: ${{ secrets.TG_BOT_MSG_URL }}
+  CHAT_ID: ${{ secrets.TG_CHAT_ID }}
+  GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+  PUSH_TOKEN: ${{ secrets.PUSH_TOKEN }}
+  GITHUB_EMAIL: ${{ secrets.EMAIL }}
+  GITHUB_USER: ${{ secrets.USERNAME }}
+
+jobs:
+  # ────────────────────────────────────────────────
+  # 1. Notify Telegram that a build has been triggered
+  # ────────────────────────────────────────────────
+  bot-notify-ci:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Send start message
+        run: |
+          curl -s -X POST "${{ env.BOT_MSG_URL }}" \
+            -d chat_id="${{ env.CHAT_ID }}" \
+            -d "disable_web_page_preview=true" \
+            -d "parse_mode=html" \
+            -d text="⚙️ CI kernel build triggered for <b>Nothing Phone 1 (Spacewar / SM7325)</b>"
+
+  # ────────────────────────────────────────────────
+  # 2. Main GCC build (with LTO)
+  # ────────────────────────────────────────────────
+  build-spacewar-gcc:
+    needs: [bot-notify-ci]
+    runs-on: ubuntu-latest
+    container:
+      image: fedora:latest
+
+    steps:
+      - name: Install build dependencies
+        run: |
+          sudo dnf install -y \
+            gcc gcc-aarch64-linux-gnu \
+            make bc flex bison \
+            openssl-devel elfutils-libelf-devel \
+            wget tar zstd bsdtar file rsync zip \
+            git python3 perl
+
+      - name: Checkout kernel source
+        uses: actions/checkout@v3
+        with:
+          repository: William24hmar/uvite_android_kernel_nothing_sm7325
+          ref: AAOSPA-VX
+          fetch-depth: 1
+
+      - name: Clone EVA GCC toolchain (aarch64 + arm32)
+        run: |
+          git clone --depth=1 https://github.com/mvaisakh/gcc-arm64 gcc-arm64
+          git clone --depth=1 https://github.com/mvaisakh/gcc-arm   gcc-arm
+
+      - name: Set toolchain environment
+        run: |
+          echo "PATH=$(pwd)/gcc-arm64/bin:$(pwd)/gcc-arm/bin:$PATH" >> $GITHUB_ENV
+          echo "CROSS_COMPILE=aarch64-elf-"                         >> $GITHUB_ENV
+          echo "CROSS_COMPILE_ARM32=arm-eabi-"                      >> $GITHUB_ENV
+          echo "KBUILD_BUILD_USER=William24hmar"                     >> $GITHUB_ENV
+          echo "KBUILD_BUILD_HOST=uvite"                             >> $GITHUB_ENV
+
+      - name: Build kernel (GCC + LTO)
+        run: |
+          mkdir -p out
+          make O=out                              \
+               ARCH=arm64                         \
+               CROSS_COMPILE=aarch64-elf-         \
+               CROSS_COMPILE_ARM32=arm-eabi-      \
+               phone1_defconfig
+
+          make O=out                              \
+               ARCH=arm64                         \
+               CROSS_COMPILE=aarch64-elf-         \
+               CROSS_COMPILE_ARM32=arm-eabi-      \
+               LTO_CLANG=0                        \
+               CONFIG_LTO=y                       \
+               -j$(nproc --all)
+
+      - name: Create flashable AnyKernel3 zip
+        run: |
+          git clone --depth=1 https://github.com/osm0sis/AnyKernel3 ak3
+          cp out/arch/arm64/boot/Image ak3/
+          # Append any dtb / dtbo if they exist
+          [ -f out/arch/arm64/boot/dtb.img ]  && cp out/arch/arm64/boot/dtb.img  ak3/dtb  || true
+          [ -f out/arch/arm64/boot/dtbo.img ] && cp out/arch/arm64/boot/dtbo.img ak3/      || true
+          cd ak3
+          zip -r9 "uvite-spacewar-$(/bin/date -u '+%d%m%Y%I%M')-gcc.zip" \
+              * -x .git README.md ./*/placeholder
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@main
+        with:
+          name: spacewar-release-zip
+          path: ak3/*.zip
+
+      - name: Push prebuilts to kernel repo
+        run: |
+          git config --global user.name  "${GITHUB_USER}"
+          git config --global user.email "${GITHUB_EMAIL}"
+          git clone \
+            https://"${GITHUB_USER}":"${PUSH_TOKEN}"@github.com/William24hmar/uvite_kernel_nothing_spacewar \
+            spacewar-kernel -b main
+          cp out/arch/arm64/boot/Image spacewar-kernel/
+          [ -f out/arch/arm64/boot/dtb.img ]  && cp out/arch/arm64/boot/dtb.img  spacewar-kernel/ || true
+          [ -f out/arch/arm64/boot/dtbo.img ] && cp out/arch/arm64/boot/dtbo.img spacewar-kernel/ || true
+          cd spacewar-kernel
+          git add .
+          git commit \
+            -m "spacewar-kernel: update prebuilts $(/bin/date -u '+%d%m%Y%I%M')" \
+            -m "version: $(strings Image | grep 'Linux version' | head -1)"
+          git push
+
+  # ────────────────────────────────────────────────
+  # 3. Profiling build (GCC + GCOV, no prebuilt push)
+  # ────────────────────────────────────────────────
+  build-spacewar-gcc-profiling:
+    needs: [bot-notify-ci]
+    runs-on: ubuntu-latest
+    container:
+      image: fedora:latest
+
+    steps:
+      - name: Install build dependencies
+        run: |
+          sudo dnf install -y \
+            gcc gcc-aarch64-linux-gnu \
+            make bc flex bison \
+            openssl-devel elfutils-libelf-devel \
+            wget tar zstd bsdtar file rsync zip \
+            git python3 perl
+
+      - name: Checkout kernel source
+        uses: actions/checkout@v3
+        with:
+          repository: William24hmar/uvite_android_kernel_nothing_sm7325
+          ref: AAOSPA-VX
+          fetch-depth: 1
+
+      - name: Clone EVA GCC toolchain (aarch64 + arm32)
+        run: |
+          git clone --depth=1 https://github.com/mvaisakh/gcc-arm64 gcc-arm64
+          git clone --depth=1 https://github.com/mvaisakh/gcc-arm   gcc-arm
+
+      - name: Set toolchain environment
+        run: |
+          echo "PATH=$(pwd)/gcc-arm64/bin:$(pwd)/gcc-arm/bin:$PATH" >> $GITHUB_ENV
+          echo "CROSS_COMPILE=aarch64-elf-"                         >> $GITHUB_ENV
+          echo "CROSS_COMPILE_ARM32=arm-eabi-"                      >> $GITHUB_ENV
+          echo "KBUILD_BUILD_USER=William24hmar"                     >> $GITHUB_ENV
+          echo "KBUILD_BUILD_HOST=uvite"                             >> $GITHUB_ENV
+
+      - name: Build kernel (GCC + GCOV profiling)
+        run: |
+          mkdir -p out
+          make O=out                              \
+               ARCH=arm64                         \
+               CROSS_COMPILE=aarch64-elf-         \
+               CROSS_COMPILE_ARM32=arm-eabi-      \
+               phone1_defconfig
+
+          make O=out                              \
+               ARCH=arm64                         \
+               CROSS_COMPILE=aarch64-elf-         \
+               CROSS_COMPILE_ARM32=arm-eabi-      \
+               CONFIG_GCOV_KERNEL=y               \
+               CONFIG_GCOV_PROFILE_ALL=y          \
+               -j$(nproc --all)
+
+      - name: Create flashable AnyKernel3 zip
+        run: |
+          git clone --depth=1 https://github.com/osm0sis/AnyKernel3 ak3
+          cp out/arch/arm64/boot/Image ak3/
+          [ -f out/arch/arm64/boot/dtb.img ]  && cp out/arch/arm64/boot/dtb.img  ak3/dtb  || true
+          [ -f out/arch/arm64/boot/dtbo.img ] && cp out/arch/arm64/boot/dtbo.img ak3/      || true
+          cd ak3
+          zip -r9 "uvite-spacewar-$(/bin/date -u '+%d%m%Y%I%M')-gcc-profiling.zip" \
+              * -x .git README.md ./*/placeholder
+
+      - name: Create GCOV .gcno profiling archive
+        run: |
+          tar -cf "uvite-spacewar-gcov-gcno-$(/bin/date -u '+%d%m%Y%I%M').xz" \
+              $(find out/ -name "*.gcno")
+
+      - name: Upload profiling artifacts
+        uses: actions/upload-artifact@main
+        with:
+          name: spacewar-profile-zip
+          path: |
+            ak3/*.zip
+            *.xz
+
+  # ────────────────────────────────────────────────
+  # 4. Publish GitHub Release (release build only)
+  # ────────────────────────────────────────────────
+  publish-release:
+    needs: [build-spacewar-gcc]
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Download release artifacts
+        uses: actions/download-artifact@main
+        with:
+          name: spacewar-release-zip
+          path: ${{ github.workspace }}/release
+
+      - name: Set release tag
+        run: echo "TAG_NAME=$(date -u +%d%m%Y%I%M)" >> $GITHUB_ENV
+
+      - name: Create GitHub Release
+        run: gh release create "${{ env.TAG_NAME }}" --generate-notes -p release/*.zip
+
+      - name: Prepare release message
+        run: |
+          gh release view "${{ env.TAG_NAME }}" > release-text
+
+      - name: Send Telegram release notification
+        run: |
+          curl -s -X POST "${{ env.BOT_MSG_URL }}" \
+            -d chat_id="${{ env.CHAT_ID }}" \
+            -d "disable_web_page_preview=true" \
+            -d "parse_mode=html" \
+            -d text="✅ <b>New Uvite build for Nothing Phone 1 (Spacewar)</b> %0A$(cat release-text | sed '1d;3d;4d;6d;7d;9d;10d;11d;12d;13d;14d;15d;16d;17d;')"
+
+  # ────────────────────────────────────────────────
+  # 5. Publish profiling release (separate tag)
+  # ────────────────────────────────────────────────
+  publish-release-profiling:
+    needs: [build-spacewar-gcc-profiling]
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Download profiling artifacts
+        uses: actions/download-artifact@main
+        with:
+          name: spacewar-profile-zip
+          path: ${{ github.workspace }}/profiling
+
+      - name: Set profiling release tag
+        run: echo "TAG_NAME_PROFILING=$(date -u +%d%m%Y%I%M)" >> $GITHUB_ENV
+
+      - name: Create Profiling GitHub Release
+        run: |
+          gh release create "${{ env.TAG_NAME_PROFILING }}-profiling" \
+            --generate-notes -p profiling/*.zip profiling/*.xz || true
+            
