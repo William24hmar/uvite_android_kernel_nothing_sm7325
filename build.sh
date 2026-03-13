@@ -142,27 +142,63 @@ setup_toolchains
 #  SET ENVIRONMENT VARIABLES
 # ─────────────────────────────────────────────────────────────────────────────
 
-# ----  Set environment variables ----
-export CLANG_TRIPLE="aarch64-none-linux-gnu-"
-export CROSS_COMPILE="aarch64-none-linux-gnu-"
-export CROSS_COMPILE_ARM32="arm-linux-gnueabi-"
+# ---- Toolchain Paths ----
+
+CLANG_DIR="$PWD/clang"
+GCC64_DIR="$PWD/gcc-64"
+GCC32_DIR="$PWD/gcc-32"
+
+export PATH="$CLANG_DIR/bin:$PATH"
+
+# ---- Set environment variables ----
+
+export ARCH=arm64
+export SUBARCH=arm64
+
+export CC=clang
+export CXX=clang++
+
+export CLANG_TRIPLE="aarch64-none-linux-android-"
+
+export CROSS_COMPILE="$GCC64_DIR/bin/aarch64-linux-android-"
+export CROSS_COMPILE_ARM32="$GCC32_DIR/bin/arm-linux-androideabi-"
+
+export LD=ld.lld
+export AR=llvm-ar
+export NM=llvm-nm
+export OBJCOPY=llvm-objcopy
+export STRIP=llvm-strip
 
 THREAD="${1:-$(nproc --all)}"
-CC_ADDITIONAL_FLAGS="LLVM_IAS=1 LLVM=1 -Wno-error=unused-function"
+
+CC_ADDITIONAL_FLAGS="LLVM=1 LLVM_IAS=1 \
+-target aarch64-none-linux-android \
+-gcc-toolchain $GCC64_DIR \
+-Wno-unused-command-line-argument \
+-Wno-invalid-command-line-argument \
+-Wno-error=unused-function"
 
 # ---- Target Variables ----
+
 TARGET_ARCH="arm64"
 TARGET_SUBARCH="arm64"
+
 TARGET_CC="clang"
 TARGET_HOSTLD="ld.lld"
-TARGET_CLANG_TRIPLE="aarch64-none-linux-gnu-"
-TARGET_CROSS_COMPILE="aarch64-none-linux-gnu-"
-TARGET_CROSS_COMPILE_COMPAT="arm-linux-gnueabi-"
+
+TARGET_CLANG_TRIPLE="aarch64-none-linux-android-"
+
+TARGET_CROSS_COMPILE="$GCC64_DIR/bin/aarch64-linux-android-"
+TARGET_CROSS_COMPILE_COMPAT="$GCC32_DIR/bin/arm-linux-androideabi-"
+
 TARGET_BUILD_USER="$KBUILD_USER"
 TARGET_BUILD_HOST="$KBUILD_HOST"
+
 TARGET_DEVICE="phone1"
 TARGET_PRODUCT="$TARGET_DEVICE"
+
 TARGET_OUT="$(pwd)/../NOTHING_PHONE1_OUT"
+
 TARGET_DTC_FLAGS="-q"
 
 TARGET_COMPILER_STRING="$COMPILER_STRING"
