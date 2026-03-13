@@ -1,7 +1,7 @@
 name: Neutrino
 
 on:
-  workflow_dispatch:  # Start only manually
+  workflow_dispatch:
 
 jobs:
   build:
@@ -23,15 +23,17 @@ jobs:
         run: |
           sudo apt-get update -y
           sudo apt-get install -y \
+            aria2 \
             bc bison build-essential flex git wget curl xz-utils \
             libssl-dev libelf-dev zlib1g-dev \
             device-tree-compiler cpio zip unzip \
             liblz4-tool zstd python3 \
-            default-jre openjdk-21-jdk e2fsprogs \
-            binutils make
-          # clang/lld/llvm come from Snapdragon Clang 19 (downloaded by build.sh)
+            default-jre openjdk-21-jdk \
+            e2fsprogs binutils make \
+            gcc g++
           echo "HOME is: $HOME"
-          echo "Toolchains will land at: $HOME/toolchains/"
+          echo "aria2c version: $(aria2c --version | head -1)"
+          echo "gcc version: $(gcc --version | head -1)"
 
       - name: Copy build.sh into kernel source
         run: cp build.sh kernel/build.sh
@@ -44,23 +46,18 @@ jobs:
         working-directory: kernel
         run: ./build.sh
         env:
-          # Non-interactive: build.sh read -t timeouts auto-select defaults
           KBUILD_BUILD_USER: William24hmar
           KBUILD_BUILD_HOST: GitHub-Actions
-          # Treat namespace warnings as non-fatal
           KBUILD_MODPOST_WARN: 1
 
       - name: Collect built artifacts
         run: |
           mkdir -p artifacts
-          echo "Searching for ZIPs under $HOME ..."
-          find "$HOME" -name "*.zip" \
-            -not -path "*/.git/*" \
-            -not -path "*/toolchains/*" 2>/dev/null | while read f; do
+          find "${{ github.workspace }}/kernel/out" -name "*.zip" 2>/dev/null | while read f; do
             echo "Found ZIP: $f"
             cp "$f" artifacts/
           done
-          echo "--- artifacts/ contents ---"
+          echo "--- artifacts/ ---"
           ls -lh artifacts/ || echo "artifacts/ is empty"
 
       - name: Upload ZIP as GitHub artifact
