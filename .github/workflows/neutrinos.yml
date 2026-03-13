@@ -24,23 +24,18 @@ jobs:
           sudo apt-get update -y
           sudo apt-get install -y \
             aria2 \
-            bc bison build-essential flex git wget curl xz-utils \
-            libssl-dev libelf-dev zlib1g-dev \
+            bc bison build-essential flex git wget curl \
+            xz-utils libssl-dev libelf-dev zlib1g-dev \
             device-tree-compiler cpio zip unzip \
             liblz4-tool zstd python3 \
             default-jre openjdk-21-jdk \
             e2fsprogs binutils make \
             gcc g++
-          echo "HOME is: $HOME"
-          echo "aria2c version: $(aria2c --version | head -1)"
-          echo "gcc version: $(gcc --version | head -1)"
+          echo "gcc version : $(gcc --version | head -1)"
+          echo "aria2c      : $(aria2c --version | head -1)"
 
       - name: Copy build.sh into kernel source
-        run: cp build.sh kernel/build.sh
-
-      - name: Make build.sh executable
-        working-directory: kernel
-        run: chmod +x build.sh
+        run: cp build.sh kernel/build.sh && chmod +x kernel/build.sh
 
       - name: Run build.sh
         working-directory: kernel
@@ -53,11 +48,8 @@ jobs:
       - name: Collect built artifacts
         run: |
           mkdir -p artifacts
-          find "${{ github.workspace }}/kernel/out" -name "*.zip" 2>/dev/null | while read f; do
-            echo "Found ZIP: $f"
-            cp "$f" artifacts/
-          done
-          echo "--- artifacts/ ---"
+          find "${{ github.workspace }}/kernel/out" -name "*.zip" 2>/dev/null \
+            | while read f; do echo "Found: $f"; cp "$f" artifacts/; done
           ls -lh artifacts/ || echo "artifacts/ is empty"
 
       - name: Upload ZIP as GitHub artifact
