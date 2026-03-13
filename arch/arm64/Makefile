@@ -46,13 +46,8 @@ ifeq ($(CONFIG_BROKEN_GAS_INST),y)
 $(warning Detected assembler with broken .inst; disassembly will be unreliable)
 endif
 
-ifdef CONFIG_CC_IS_CLANG
-KBUILD_CFLAGS	+= -mno-implicit-float
-else
-KBUILD_CFLAGS	+= -mgeneral-regs-only
-endif
-
-KBUILD_CFLAGS	+= $(compat_vdso) $(cc_has_k_constraint)
+KBUILD_CFLAGS	+= -mgeneral-regs-only	\
+		   $(compat_vdso) $(cc_has_k_constraint)
 KBUILD_CFLAGS	+= -fno-asynchronous-unwind-tables
 KBUILD_CFLAGS	+= $(call cc-disable-warning, psabi)
 KBUILD_AFLAGS	+= $(compat_vdso)
@@ -171,12 +166,10 @@ ifeq ($(KBUILD_EXTMOD),)
 # this hack.
 prepare: vdso_prepare
 vdso_prepare: prepare0
-	$(Q)$(MAKE) $(build)=arch/arm64/kernel/vdso \
-	include/generated/vdso-offsets.h arch/arm64/kernel/vdso/vdso.so
-ifdef CONFIG_COMPAT_VDSO
-	$(Q)$(MAKE) $(build)=arch/arm64/kernel/vdso32 \
-	include/generated/vdso32-offsets.h arch/arm64/kernel/vdso32/vdso.so
-endif
+	$(Q)$(MAKE) $(build)=arch/arm64/kernel/vdso include/generated/vdso-offsets.h
+	$(if $(CONFIG_COMPAT_VDSO),$(Q)$(MAKE) \
+		$(build)=arch/arm64/kernel/vdso32  \
+		include/generated/vdso32-offsets.h)
 endif
 
 define archhelp

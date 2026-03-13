@@ -250,9 +250,10 @@ bool msm_ion_heap_is_secure(int heap_id)
 {
 	struct ion_heap *heap = ion_heap_by_id(heap_id);
 
-	if (IS_ERR(heap) || !(heap->type == ION_HEAP_TYPE_SECURE_CARVEOUT ||
-			      heap->type == ION_HEAP_TYPE_SYSTEM_SECURE ||
-			      heap->type == ION_HEAP_TYPE_HYP_CMA))
+	if (IS_ERR(heap) ||
+	    !(heap->type == (enum ion_heap_type)ION_HEAP_TYPE_SECURE_CARVEOUT ||
+	      heap->type == (enum ion_heap_type)ION_HEAP_TYPE_SYSTEM_SECURE ||
+	      heap->type == (enum ion_heap_type)ION_HEAP_TYPE_HYP_CMA))
 		return false;
 
 	return true;
@@ -606,7 +607,7 @@ static int msm_ion_probe(struct platform_device *pdev)
 
 		heaps[i] = ion_heap_create(heap_data);
 		if (IS_ERR_OR_NULL(heaps[i])) {
-			heaps[i] = NULL;
+			heaps[i] = 0;
 			continue;
 		} else {
 			if (heap_data->size)

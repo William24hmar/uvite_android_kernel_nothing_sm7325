@@ -1,7 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 /*
  * Copyright (c) 2002,2007-2021, The Linux Foundation. All rights reserved.
- * Copyright (c) 2022 Qualcomm Innovation Center, Inc. All rights reserved.
  */
 #ifndef __KGSL_DEVICE_H
 #define __KGSL_DEVICE_H
@@ -34,11 +33,11 @@
 #define KGSL_STATE_NONE		0x00000000
 #define KGSL_STATE_INIT		0x00000001
 #define KGSL_STATE_ACTIVE	0x00000002
-#define KGSL_STATE_NAP		0x00000004 /* Not Used */
+#define KGSL_STATE_NAP		0x00000004
 #define KGSL_STATE_SUSPEND	0x00000010
 #define KGSL_STATE_AWARE	0x00000020
 #define KGSL_STATE_SLUMBER	0x00000080
-#define KGSL_STATE_MINBW	0x00000100 /* Not Used */
+#define KGSL_STATE_MINBW	0x00000100
 
 /**
  * enum kgsl_event_results - result codes passed to an event callback when the
@@ -155,6 +154,8 @@ struct kgsl_functable {
 	void (*pwrlevel_change_settings)(struct kgsl_device *device,
 		unsigned int prelevel, unsigned int postlevel, bool post);
 	void (*regulator_disable_poll)(struct kgsl_device *device);
+	void (*clk_set_options)(struct kgsl_device *device,
+		const char *name, struct clk *clk, bool on);
 	void (*gpu_model)(struct kgsl_device *device, char *str,
 		size_t bufsz);
 	/**
@@ -292,7 +293,7 @@ struct kgsl_device {
 	struct kgsl_pwrscale pwrscale;
 
 	int reset_counter; /* Track how many GPU core resets have occurred */
-	struct kthread_worker *events_worker;
+	struct workqueue_struct *events_wq;
 
 	/* Number of active contexts seen globally for this device */
 	int active_context_count;
@@ -461,10 +462,6 @@ struct kgsl_process_private {
 	atomic_t ctxt_count;
 	spinlock_t ctxt_count_lock;
 	atomic64_t frame_count;
-	/**
-	 * @private_mutex: Mutex lock to protect kgsl_process_private
-	 */
-	struct mutex private_mutex;
 };
 
 /**
@@ -610,6 +607,15 @@ static inline int kgsl_state_is_awake(struct kgsl_device *device)
 		return true;
 	else
 		return false;
+}
+
+static inline bool kgsl_state_is_nap_or_minbw(struct kgsl_device *device)
+{
+	if (device->state == KGSL_STATE_NAP ||
+		device->state == KGSL_STATE_MINBW)
+		return true;
+
+	return false;
 }
 
 /**

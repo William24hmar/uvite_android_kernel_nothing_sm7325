@@ -3028,7 +3028,7 @@
 
 				config {
 					pins = "gpio140";
-					bias-pull-down;
+					bias-disable;
 					drive-strength = <2>;
 				};
 			};

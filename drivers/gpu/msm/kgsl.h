@@ -261,7 +261,7 @@ struct kgsl_global_memdesc {
  *  are still references to it.
  * @dev_priv: back pointer to the device file that created this entry.
  * @metadata: String containing user specified metadata for the entry
- * @work: Work struct used to schedule kgsl_mem_entry_destroy()
+ * @work: Work struct used to schedule a kgsl_mem_entry_put in atomic contexts
  */
 struct kgsl_mem_entry {
 	struct kref refcount;
@@ -295,7 +295,7 @@ typedef void (*kgsl_event_func)(struct kgsl_device *, struct kgsl_event_group *,
  * @priv: Private data passed to the callback function
  * @node: List node for the kgsl_event_group list
  * @created: Jiffies when the event was created
- * @work: kthread_work struct for dispatching the callback
+ * @work: Work struct for dispatching the callback
  * @result: KGSL event result type to pass to the callback
  * group: The event group this event belongs to
  */
@@ -307,7 +307,7 @@ struct kgsl_event {
 	void *priv;
 	struct list_head node;
 	unsigned int created;
-	struct kthread_work work;
+	struct work_struct work;
 	int result;
 	struct kgsl_event_group *group;
 };
@@ -450,7 +450,6 @@ long kgsl_ioctl_timeline_destroy(struct kgsl_device_private *dev_priv,
 		unsigned int cmd, void *data);
 
 void kgsl_mem_entry_destroy(struct kref *kref);
-void kgsl_mem_entry_destroy_deferred(struct kref *kref);
 
 void kgsl_get_egl_counts(struct kgsl_mem_entry *entry,
 			int *egl_surface_count, int *egl_image_count);
@@ -568,7 +567,7 @@ kgsl_mem_entry_put(struct kgsl_mem_entry *entry)
 		kref_put(&entry->refcount, kgsl_mem_entry_destroy);
 }
 
-/*
+/**
  * kgsl_mem_entry_put_deferred() - Puts refcount and triggers deferred
  * mem_entry destroy when refcount is the last refcount.
  * @entry: memory entry to be put.
@@ -576,11 +575,7 @@ kgsl_mem_entry_put(struct kgsl_mem_entry *entry)
  * Use this to put a memory entry when we don't want to block
  * the caller while destroying memory entry.
  */
-static inline void kgsl_mem_entry_put_deferred(struct kgsl_mem_entry *entry)
-{
-	if (entry)
-		kref_put(&entry->refcount, kgsl_mem_entry_destroy_deferred);
-}
+void kgsl_mem_entry_put_deferred(struct kgsl_mem_entry *entry);
 
 /*
  * kgsl_addr_range_overlap() - Checks if 2 ranges overlap
