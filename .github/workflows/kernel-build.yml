@@ -1,0 +1,72 @@
+name: Nothing Phone 1 Kernel Build
+
+on:
+workflow_dispatch:
+
+jobs:
+build:
+runs-on: ubuntu-22.04
+
+```
+steps:
+
+- name: Checkout kernel source
+  uses: actions/checkout@v4
+  with:
+    repository: William24hmar/uvite_android_kernel_nothing_sm7325
+    ref: AAOSPA-VX
+    path: kernel
+    fetch-depth: 1
+
+- name: Checkout build script repo
+  uses: actions/checkout@v4
+  with:
+    path: scripts
+
+- name: Move build.sh into kernel
+  run: |
+    cp scripts/build.sh kernel/
+    chmod +x kernel/build.sh
+
+- name: Install build dependencies
+  run: |
+    sudo apt update
+
+    sudo apt install -y \
+    bc bison build-essential flex git curl wget \
+    aria2 xz-utils zstd \
+    libssl-dev libelf-dev zlib1g-dev \
+    device-tree-compiler \
+    python3 unzip zip cpio \
+    openjdk-21-jdk \
+    liblz4-tool \
+    gcc g++
+
+- name: Show system info
+  run: |
+    nproc
+    free -h
+    gcc --version
+    java -version
+
+- name: Run kernel build
+  working-directory: kernel
+  run: |
+    ./build.sh \
+    --device=lahaina \
+    --compiler=clang \
+    --compiler32=gcc
+
+- name: Collect artifacts
+  run: |
+    mkdir artifacts
+    find kernel -name "*.zip" -exec cp {} artifacts/ \;
+
+- name: Upload kernel ZIP
+  uses: actions/upload-artifact@v4
+  with:
+    name: NothingPhone1-Kernel
+    path: artifacts/*.zip
+    if-no-files-found: warn
+```
+
