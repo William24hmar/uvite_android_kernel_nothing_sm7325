@@ -37,9 +37,13 @@ jobs:
       - name: Copy build.sh into kernel source
         run: cp build.sh kernel/build.sh && chmod +x kernel/build.sh
 
-      - name: Run build.sh
-        working-directory: kernel
-        run: ./build.sh
+      - - name: Run build.sh
+          working-directory: kernel
+          run: |
+           ./build.sh \
+           --compiler=clang \
+           --compiler32=gcc \
+           --device=lahaina
         env:
           KBUILD_BUILD_USER: William24hmar
           KBUILD_BUILD_HOST: GitHub-Actions
