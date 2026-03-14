@@ -1,7 +1,7 @@
-name: Build Kernel with SDClang
+name: Build Kernel with SDclang
 
 on:
-  workflow_dispatch:        # Allows manual trigger
+  workflow_dispatch:
     inputs:
       kernel_branch:
         description: 'Branch to build (e.g., AAOSPA-VX)'
@@ -21,38 +21,35 @@ jobs:
         with:
           ref: ${{ github.event.inputs.kernel_branch }}
 
-      - name: Install build dependencies
+      - name: Install system dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y \
-            bc bison flex libssl-dev make \
-            libelf-dev lz4 cpio \
+            bc bison flex libssl-dev make libelf-dev lz4 cpio \
             gcc-aarch64-linux-gnu gcc-arm-linux-gnueabi \
-            # These are only needed for legacy toolchains; SDClang provides its own,
-            # but some kernel scripts may still depend on them.
-            # The following packages are from your install_packages() function:
-            build-essential clang lld llvm \
-            device-tree-compiler \
-            python3 python3-pip zip \
-            git ccache
+            build-essential clang lld llvm device-tree-compiler \
+            python3 python3-pip zip git ccache
 
-      - name: Download and extract SDClang
+      - name: Download and extract SDclang
         run: |
           mkdir -p $GITHUB_WORKSPACE/sdclang
           wget -q https://github.com/khuza08/snapdragon-clang/releases/download/sdclang-19.0.0-release/sdclang19.tgz
           tar -xf sdclang19.tgz -C $GITHUB_WORKSPACE/sdclang --strip-components=1
           echo "SDCLANG_PATH=$GITHUB_WORKSPACE/sdclang" >> $GITHUB_ENV
 
-      - name: Set up environment for SDClang
+      - name: Set up environment for SDclang
         run: |
           # Add toolchain binaries to PATH
           echo "${{ env.SDCLANG_PATH }}/bin" >> $GITHUB_PATH
 
-          # SDClang uses a sysroot located inside its own directory
-          SYSROOT="${{ env.SDCLANG_PATH }}/aarch64-linux-gnu"
-          echo "SYSROOT=$SYSROOT" >> $GITHUB_ENV
+          # Set LD_LIBRARY_PATH to the library directory (lib or lib64)
+          if [ -d "${{ env.SDCLANG_PATH }}/lib64" ]; then
+            echo "LD_LIBRARY_PATH=${{ env.SDCLANG_PATH }}/lib64" >> $GITHUB_ENV
+          elif [ -d "${{ env.SDCLANG_PATH }}/lib" ]; then
+            echo "LD_LIBRARY_PATH=${{ env.SDCLANG_PATH }}/lib" >> $GITHUB_ENV
+          fi
 
-          # Kernel build variables
+          # Kernel build metadata
           echo "KBUILD_BUILD_USER=William24hmar" >> $GITHUB_ENV
           echo "KBUILD_BUILD_HOST=GitHub-Actions" >> $GITHUB_ENV
 
@@ -63,6 +60,7 @@ jobs:
                CLANG_TRIPLE=aarch64-linux-gnu- \
                CROSS_COMPILE=aarch64-linux-gnu- \
                CROSS_COMPILE_ARM32=arm-linux-gnueabi- \
+               HOSTCC=gcc HOSTCXX=g++ \
                LLVM=1 LLVM_IAS=1 \
                O=out \
                ${{ github.event.inputs.defconfig }}
@@ -74,6 +72,7 @@ jobs:
                CLANG_TRIPLE=aarch64-linux-gnu- \
                CROSS_COMPILE=aarch64-linux-gnu- \
                CROSS_COMPILE_ARM32=arm-linux-gnueabi- \
+               HOSTCC=gcc HOSTCXX=g++ \
                LLVM=1 LLVM_IAS=1 \
                O=out \
                -j$(nproc --all)
@@ -81,13 +80,9 @@ jobs:
       - name: Prepare AnyKernel3 package
         run: |
           git clone --depth=1 https://github.com/William24hmar/AnyKernel3.git -b master anykernel
-          # Copy kernel image
           cp out/arch/arm64/boot/Image anykernel/
-          # Copy dtb / dtbo if they exist (adjust paths if your kernel generates them differently)
           [ -f out/arch/arm64/boot/dtb ] && cp out/arch/arm64/boot/dtb anykernel/ || true
           [ -f out/arch/arm64/boot/dtbo.img ] && cp out/arch/arm64/boot/dtbo.img anykernel/ || true
-          # Optionally copy vendor_dlkm if modules are enabled – see your build.sh for details.
-          # For simplicity, we skip module handling here; add if needed.
 
       - name: Create flashable ZIP
         run: |
