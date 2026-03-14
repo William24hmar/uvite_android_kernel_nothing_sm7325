@@ -65,17 +65,15 @@ jobs:
             echo "LD_LIBRARY_PATH=${{ env.SDCLANG_PATH }}/lib" >> $GITHUB_ENV
           fi
 
-          # Kernel build metadata
-          echo "KBUILD_BUILD_USER=William24hmar" >> $GITHUB_ENV
-          echo "KBUILD_BUILD_HOST=GitHub-Actions" >> $GITHUB_ENV
+          # Kernel build metadata (custom user/host)
+          echo "KBUILD_BUILD_USER=Willay" >> $GITHUB_ENV
+          echo "KBUILD_BUILD_HOST=Linux" >> $GITHUB_ENV
 
-          # Extract Snapdragon compiler string (fallback to default)
-          COMPILER_STRING="$(${{ env.SDCLANG_PATH }}/bin/clang -v 2>&1 | grep -m1 'Snapdragon LLVM' | sed 's/^[[:space:]]*//')"
-          if [ -n "$COMPILER_STRING" ]; then
-            echo "KBUILD_COMPILER_STRING=$COMPILER_STRING" >> $GITHUB_ENV
-          else
-            echo "KBUILD_COMPILER_STRING=$(${{ env.SDCLANG_PATH }}/bin/clang --version | head -n1)" >> $GITHUB_ENV
-          fi
+          # Extract clang version number (e.g., 19.0.0)
+          CLANG_VERSION=$(${{ env.SDCLANG_PATH }}/bin/clang --version | head -n1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+')
+          # Construct custom compiler string (without commit hash, as SDclang doesn't provide one)
+          COMPILER_STRING="Snapdragon clang ${CLANG_VERSION} (https://github.com/llvm/llvm-project.git), (SDLLVM ${CLANG_VERSION} is based on LLVM 19.1.0-rc4)"
+          echo "KBUILD_COMPILER_STRING=$COMPILER_STRING" >> $GITHUB_ENV
 
       - name: Setup ReSukiSU (if enabled)
         if: ${{ github.event.inputs.enable_resukisu == 'yes' }}
