@@ -32,9 +32,20 @@ jobs:
 
       - name: Download and extract SDclang
         run: |
-          mkdir -p $GITHUB_WORKSPACE/sdclang
-          wget -q https://github.com/khuza08/snapdragon-clang/releases/download/sdclang-19.0.0-release/sdclang19.tgz
-          tar -xf sdclang19.tgz -C $GITHUB_WORKSPACE/sdclang --strip-components=1
+          # Ensure a clean destination
+          rm -rf "$GITHUB_WORKSPACE/sdclang"
+          mkdir -p "$GITHUB_WORKSPACE/sdclang"
+          
+          # Download with progress and check success
+          wget https://github.com/khuza08/snapdragon-clang/releases/download/sdclang-19.0.0-release/sdclang19.tgz
+          if [ $? -ne 0 ] || [ ! -f sdclang19.tgz ]; then
+            echo "Download failed!"
+            exit 1
+          fi
+          
+          # Extract, stripping the top-level directory
+          tar -xf sdclang19.tgz -C "$GITHUB_WORKSPACE/sdclang" --strip-components=1
+          rm -f sdclang19.tgz
           echo "SDCLANG_PATH=$GITHUB_WORKSPACE/sdclang" >> $GITHUB_ENV
 
       - name: Set up environment for SDclang
