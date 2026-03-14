@@ -74,6 +74,7 @@ jobs:
                CROSS_COMPILE_ARM32=arm-linux-gnueabi- \
                HOSTCC=gcc HOSTCXX=g++ \
                LLVM=1 LLVM_IAS=1 \
+               KCFLAGS="-Wno-unknown-warning-option" \
                O=out \
                ${{ github.event.inputs.defconfig }}
 
@@ -86,6 +87,7 @@ jobs:
                CROSS_COMPILE_ARM32=arm-linux-gnueabi- \
                HOSTCC=gcc HOSTCXX=g++ \
                LLVM=1 LLVM_IAS=1 \
+               KCFLAGS="-Wno-unknown-warning-option" \
                O=out \
                -j$(nproc --all)
 
