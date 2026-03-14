@@ -1,62 +1,104 @@
-name: Neutrino
+name: Build Kernel with SDClang
 
 on:
-  workflow_dispatch:
+  workflow_dispatch:        # Allows manual trigger
+    inputs:
+      kernel_branch:
+        description: 'Branch to build (e.g., AAOSPA-VX)'
+        required: true
+        default: 'AAOSPA-VX'
+      defconfig:
+        description: 'Defconfig name (without path)'
+        required: true
+        default: 'phone1_defconfig'
 
 jobs:
   build:
     runs-on: ubuntu-latest
-
     steps:
-      - name: Checkout workflow files (build.sh etc.)
-        uses: actions/checkout@v4
-
-      - name: Checkout kernel source (Nothing Phone 1 — AAOSPA-VX)
+      - name: Checkout kernel source
         uses: actions/checkout@v4
         with:
-          repository: William24hmar/uvite_android_kernel_nothing_sm7325
-          ref: AAOSPA-VX
-          path: kernel
-          fetch-depth: 1
+          ref: ${{ github.event.inputs.kernel_branch }}
 
       - name: Install build dependencies
         run: |
-          sudo apt-get update -y
+          sudo apt-get update
           sudo apt-get install -y \
-            aria2 \
-            bc bison build-essential flex git wget curl \
-            xz-utils libssl-dev libelf-dev zlib1g-dev \
-            device-tree-compiler cpio zip unzip \
-            liblz4-tool zstd python3 \
-            default-jre openjdk-21-jdk \
-            e2fsprogs binutils make \
-            gcc g++ \
-            gcc-aarch64-linux-gnu \
-            gcc-arm-linux-gnueabi
-          echo "gcc version : $(gcc --version | head -1)"
-          echo "aria2c      : $(aria2c --version | head -1)"
+            bc bison flex libssl-dev make \
+            libelf-dev lz4 cpio \
+            gcc-aarch64-linux-gnu gcc-arm-linux-gnueabi \
+            # These are only needed for legacy toolchains; SDClang provides its own,
+            # but some kernel scripts may still depend on them.
+            # The following packages are from your install_packages() function:
+            build-essential clang lld llvm \
+            device-tree-compiler \
+            python3 python3-pip zip \
+            git ccache
 
-      - name: Copy build.sh into kernel source
-        run: cp build.sh kernel/build.sh && chmod +x kernel/build.sh
-
-      - name: Run build.sh
-        working-directory: kernel
-        run: ./build.sh
-        env:
-          KBUILD_BUILD_USER: William24hmar
-          KBUILD_BUILD_HOST: GitHub-Actions
-          KBUILD_MODPOST_WARN: 1
-
-      - name: Collect built artifacts
+      - name: Download and extract SDClang
         run: |
-          mkdir -p artifacts
-          find "${{ github.workspace }}/kernel/out" -name "*.zip" 2>/dev/null \
-            | while read f; do echo "Found: $f"; cp "$f" artifacts/; done
-          ls -lh artifacts/ || echo "artifacts/ is empty"
+          mkdir -p $GITHUB_WORKSPACE/sdclang
+          wget -q https://github.com/khuza08/snapdragon-clang/releases/download/sdclang-19.0.0-release/sdclang19.tgz
+          tar -xf sdclang19.tgz -C $GITHUB_WORKSPACE/sdclang --strip-components=1
+          echo "SDCLANG_PATH=$GITHUB_WORKSPACE/sdclang" >> $GITHUB_ENV
 
-      - name: Upload ZIP as GitHub artifact
+      - name: Set up environment for SDClang
+        run: |
+          # Add toolchain binaries to PATH
+          echo "${{ env.SDCLANG_PATH }}/bin" >> $GITHUB_PATH
+
+          # SDClang uses a sysroot located inside its own directory
+          SYSROOT="${{ env.SDCLANG_PATH }}/aarch64-linux-gnu"
+          echo "SYSROOT=$SYSROOT" >> $GITHUB_ENV
+
+          # Kernel build variables
+          echo "KBUILD_BUILD_USER=William24hmar" >> $GITHUB_ENV
+          echo "KBUILD_BUILD_HOST=GitHub-Actions" >> $GITHUB_ENV
+
+      - name: Configure kernel (defconfig)
+        run: |
+          make ARCH=arm64 \
+               CC=clang \
+               CLANG_TRIPLE=aarch64-linux-gnu- \
+               CROSS_COMPILE=aarch64-linux-gnu- \
+               CROSS_COMPILE_ARM32=arm-linux-gnueabi- \
+               LLVM=1 LLVM_IAS=1 \
+               O=out \
+               ${{ github.event.inputs.defconfig }}
+
+      - name: Build kernel
+        run: |
+          make ARCH=arm64 \
+               CC=clang \
+               CLANG_TRIPLE=aarch64-linux-gnu- \
+               CROSS_COMPILE=aarch64-linux-gnu- \
+               CROSS_COMPILE_ARM32=arm-linux-gnueabi- \
+               LLVM=1 LLVM_IAS=1 \
+               O=out \
+               -j$(nproc --all)
+
+      - name: Prepare AnyKernel3 package
+        run: |
+          git clone --depth=1 https://github.com/William24hmar/AnyKernel3.git -b master anykernel
+          # Copy kernel image
+          cp out/arch/arm64/boot/Image anykernel/
+          # Copy dtb / dtbo if they exist (adjust paths if your kernel generates them differently)
+          [ -f out/arch/arm64/boot/dtb ] && cp out/arch/arm64/boot/dtb anykernel/ || true
+          [ -f out/arch/arm64/boot/dtbo.img ] && cp out/arch/arm64/boot/dtbo.img anykernel/ || true
+          # Optionally copy vendor_dlkm if modules are enabled – see your build.sh for details.
+          # For simplicity, we skip module handling here; add if needed.
+
+      - name: Create flashable ZIP
+        run: |
+          cd anykernel
+          ZIP_NAME="Neutrino-$(date +%Y%m%d-%H%M).zip"
+          zip -r9 "../$ZIP_NAME" * -x "*.git*" "README.md"
+          cd ..
+          echo "ZIP_FILE=$ZIP_NAME" >> $GITHUB_ENV
+
+      - name: Upload ZIP as artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Neutrino-NothingPhone1-${{ github.run_number }}
-          path: artifacts/*.zip
-          if-no-files-found: warn
+          name: Kernel-flashable
+          path: ${{ env.ZIP_FILE }}
