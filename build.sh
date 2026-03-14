@@ -1,908 +1,656 @@
 #!/bin/bash
-# build.sh - Android Kernel Build Script to k5.x
-# Make sure clang is added to your path before using this script
-# Semi-automatic script suitable for use in Ubuntu, Debian, Kali and NetHunter
-# Author Madara273
-# ----------------------------------------------------------------------------
+#
+#   Build kernel with Snapdragon Clang 19 (sdclang-19)
+#
+#   Usage:
+#       ./build.sh --device=lahaina
+#       ./build.sh --device=lahaina --clean
+#       ./build.sh --device=lahaina --log
+#       ./build.sh --regen
+#
+#   Toolchain layout (after extracting sdclang19.tgz):
+#       toolchains/sdclang/
+#       └── linux-x86_64/
+#           ├── bin/
+#           │   ├── clang          <- compiler driver (also doubles as assembler)
+#           │   ├── clang++
+#           │   ├── arm-link       <- linker (a.k.a ld.qcld)
+#           │   ├── arm-ar         <- archiver
+#           │   ├── arm-nm         <- object file symbols
+#           │   ├── arm-elfcopy    <- object file copier
+#           │   ├── llvm-objdump   <- object file viewer
+#           │   ├── arm-ranlib     <- archive indexer
+#           │   ├── arm-size       <- object file size
+#           │   ├── arm-strings    <- object file strings
+#           │   ├── arm-strip      <- object file stripper
+#           │   ├── arm-c++filt    <- C++ filter
+#           │   ├── arm-addr2line  <- address converter
+#           │   └── arm-readelf    <- ELF file viewer
+#           └── lib/               <- runtime shared libraries
+#
 
-# ---- Define colors (real ESC via $'...') ----
-GREEN=$'\033[0;32m'
-RED=$'\033[0;31m'
-YELLOW=$'\033[1;33m'
-PURPLE=$'\033[0;35m'
-MAGENTA=$'\033[1;35m'
-LGREEN=$'\033[92m'
-PINK=$'\033[38;5;206m'
-CYAN=$'\033[0;36m'
-BLUE=$'\033[0;34m'
-GREY=$'\033[38;5;250m'   # light grey (256-color)
-NC=$'\033[0m'            # reset
+############################################################################
+#                              COLORS
+############################################################################
 
-# ---- Get the absolute path of the current directory ----
-CURRENT_DIR="$(pwd)"
+blue='\033[0;34m'
+yellow='\033[0;33m'
+white='\033[0m'
+red='\033[0;31m'
+green='\e[0;32m'
+magenta='\033[1;35m'
+lgreen='\e[92m'
+cyan='\033[0;36m'
+purple='\033[0;35m'
+orange_yellow='\033[38;5;214m'
+greenish_yellow='\033[38;5;190m'
+reset='\e[0m'
 
-# ---- Set Eastern Time timezone ----
-export TZ=Europe/Kiev # Enter your time zone
+R='\033[1;31m'
+G='\033[1;32m'
+B='\033[1;34m'
+W='\033[1;37m'
 
-# ---- random_color - generates a random color for output to the terminal ----
-random_color() {
-	local colors=($GREEN $RED $YELLOW $PURPLE $BLUE)	# Array of colors
-	local random_index=$((RANDOM % ${#colors[@]}))		# Random index
-	echo -e "${colors[$random_index]}"			# For color interpretation
-}
+############################################################################
+#                            ASCII ART LOGO
+############################################################################
 
-# ---- Get information about the distribution and its version ----
-. /etc/os-release 2>/dev/null || { OS=$(uname -s); VERSION_ID=$(uname -r); }
-
-# ---- Output information to the terminal -----
-echo -e "\n$(random_color)━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-echo -e "    - OS: $NAME $VERSION_ID"
-echo -e "    - Kernel: $(uname -r)"
-echo -e "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}\n"
-
-# ----  ASCII Art Logo with random colors ----
 ascii_art_logo() {
-	echo -e "
-$(random_color)*****************************NEUTRINO*****************************${NC}
-$(random_color) ______ ______ _______ _______ _______ _______ ___ ___ ______ _______ ${NC}
-$(random_color)|   __ \   __ \       |_     _|       |_     _|   |   |   __ \    ___|${NC}
-$(random_color)|    __/      <   -   | |   | |   -   | |   |  \     /|    __/    ___|${NC}
-$(random_color)|___|  |___|__|_______| |___| |_______| |___|   |___| |___|  |_______|${NC}
+  echo -e "
+${cyan}*******************************Phone1*******************************${reset}
+${cyan} ______ ______ _______ _______ _______ _______ ___ ___ ______ _______ ${reset}
+${cyan}|   __ \   __ \       |_     _|       |_     _|   |   |   __ \    ___|${reset}
+${cyan}|    __/      <   -   | |   | |   -   | |   |  \     /|    __/    ___|${reset}
+${cyan}|___|  |___|__|_______| |___| |_______| |___|   |___| |___|  |_______|${reset}
 "
 }
 
-# ---- Prompt user for input ----
-echo -e "${PURPLE}Enter KBUILD_USER:${NC}"
-read -t 5 -rp "KBUILD_USER: " KBUILD_USER
-KBUILD_USER="${KBUILD_USER:-William24hmar}"	# If user doesn't enter a value, use "William24hmar"
-echo "$KBUILD_USER"	# Output the value of KBUILD_USER
+############################################################################
+#                             HELPER FUNCTIONS
+############################################################################
 
-echo -e "${PURPLE}Enter KBUILD_HOST:${NC}"
-read -t 5 -rp "KBUILD_HOST: " KBUILD_HOST
-KBUILD_HOST="${KBUILD_HOST:-William24hmar_GNU/Linux-2025.3}"	# If user doesn't enter a value, use "William24hmar_GNU/Linux-2025.3"
-echo "$KBUILD_HOST"	# Output the value of KBUILD_HOST
-
-# ─────────────────────────────────────────────────────────────────────────────
-#  TOOLCHAIN CONFIGURATION
-# ─────────────────────────────────────────────────────────────────────────────
-
-# Snapdragon Clang
-SDCLANG_URL="https://github.com/ravindu644/Android-Kernel-Tutorials/releases/download/toolchains/llvm-arm-toolchain-ship-10.0.9.tar.gz"
-SDCLANG_DIR="$(pwd)/../toolchains/sdclang"
-
-# GCC 14.2 AArch64 cross-compiler (ravindu644 prebuilt)
-GCC64_URL="https://github.com/ravindu644/Android-Kernel-Tutorials/releases/download/toolchains/arm-gnu-toolchain-14.2.rel1-x86_64-aarch64-none-linux-gnu.tar.xz"
-GCC64_DIR="$(pwd)/../toolchains/aarch64-none-linux-gnu"
-
-# AOSP GCC 4.9 ARM32 linker stub (needed for 32-bit compat)
-GCC32_URL="https://android.googlesource.com/platform/prebuilts/gcc/linux-x86/arm/arm-linux-androideabi-4.9"
-GCC32_DIR="$(pwd)/../toolchains/arm-linux-androideabi-4.9"
-
-# ---- Download and set up all toolchains ----
-setup_toolchains() {
-	echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-	echo -e "${CYAN}  Setting up toolchains${NC}"
-	echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-
-	mkdir -p "$(dirname "$SDCLANG_DIR")"
-
-	# ── Snapdragon Clang ──────────────────────────────────────────────
-	if [ -f "$SDCLANG_DIR/bin/clang" ]; then
-		echo -e "${GREEN}✔ Snapdragon Clang already present: $SDCLANG_DIR${NC}"
-	else
-		echo -e "${YELLOW}Downloading Snapdragon Clang (~677 MB)…${NC}"
-		wget -q --show-progress -O /tmp/llvm-arm-toolchain-ship-10.0.9.tar.gz "$SDCLANG_URL" \
-			|| { echo -e "${RED}✘ Snapdragon Clang download failed!${NC}"; exit 1; }
-		echo -e "${YELLOW}Extracting Snapdragon Clang…${NC}"
-		rm -rf "$SDCLANG_DIR" && mkdir -p "$SDCLANG_DIR"
-		tar -xf /tmp/llvm-arm-toolchain-ship-10.0.9.tar.gz -C "$SDCLANG_DIR" --strip-components=1
-		rm -f /tmp/llvm-arm-toolchain-ship-10.0.9.tar.gz
-		echo -e "${GREEN}✔ Snapdragon Clang 19 ready${NC}"
-	fi
-
-	# ── GCC 14.2 AArch64 (ravindu644 prebuilt — matches aarch64-none-linux-gnu prefix) ──
-	if [ -f "$GCC64_DIR/bin/aarch64-none-linux-gnu-gcc" ]; then
-		echo -e "${GREEN}✔ GCC 14.2 AArch64 already present: $GCC64_DIR${NC}"
-	else
-		echo -e "${YELLOW}Downloading GCC 14.2 AArch64 cross-compiler…${NC}"
-		wget -q --show-progress -O /tmp/gcc64.tar.xz "$GCC64_URL" \
-			|| { echo -e "${RED}✘ GCC64 download failed!${NC}"; exit 1; }
-		echo -e "${YELLOW}Extracting GCC64…${NC}"
-		rm -rf "$GCC64_DIR" && mkdir -p "$GCC64_DIR"
-		tar -xf /tmp/gcc64.tar.xz -C "$GCC64_DIR" --strip-components=1
-		rm -f /tmp/gcc64.tar.xz
-		echo -e "${GREEN}✔ GCC 14.2 AArch64 ready${NC}"
-	fi
-
-	# ── AOSP GCC 4.9 ARM32 (linker stub for 32-bit compat) ──────────────
-	if [ -d "$GCC32_DIR/bin" ]; then
-		echo -e "${GREEN}✔ GCC32 already present: $GCC32_DIR${NC}"
-	else
-		echo -e "${YELLOW}Cloning AOSP GCC 4.9 ARM32…${NC}"
-		git clone --depth=1 "$GCC32_URL" "$GCC32_DIR" \
-			|| { echo -e "${RED}✘ GCC32 clone failed!${NC}"; exit 1; }
-		echo -e "${GREEN}✔ GCC32 ready${NC}"
-	fi
-
-	# ── Export PATH so make picks up clang + gcc cross tools ────────────
-	export PATH="$SDCLANG_DIR/bin:$GCC64_DIR/bin:$GCC32_DIR/bin:$PATH"
-
-	# ── Capture version strings used in build info display ───────────────
-	COMPILER_STRING="$("$SDCLANG_DIR/bin/clang" --version 2>&1 | head -1)"
-	CC_VERSION="$COMPILER_STRING"
-	LD_VERSION="$("$SDCLANG_DIR/bin/ld.lld" --version 2>&1 | head -1)"
-	echo -e "${GREEN}Compiler : $COMPILER_STRING${NC}"
-	echo -e "${GREEN}Linker   : $LD_VERSION${NC}"
-}
-
-# Run toolchain setup immediately so PATH is ready before env vars below
-setup_toolchains
-
-# ─────────────────────────────────────────────────────────────────────────────
-#  SET ENVIRONMENT VARIABLES
-# ─────────────────────────────────────────────────────────────────────────────
-
-# ---- Toolchain Paths ----
-
-CLANG_DIR="$PWD/clang"
-GCC64_DIR="$PWD/gcc-64"
-GCC32_DIR="$PWD/gcc-32"
-
-export PATH="$CLANG_DIR/bin:$PATH"
-
-# ---- Set environment variables ----
-
-export ARCH=arm64
-export SUBARCH=arm64
-
-export CC=clang
-export CXX=clang++
-
-export CLANG_TRIPLE="aarch64-none-linux-android-"
-
-export CROSS_COMPILE="$GCC64_DIR/bin/aarch64-linux-android-"
-export CROSS_COMPILE_ARM32="$GCC32_DIR/bin/arm-linux-androideabi-"
-
-export LD=ld.lld
-export AR=llvm-ar
-export NM=llvm-nm
-export OBJCOPY=llvm-objcopy
-export STRIP=llvm-strip
-
-THREAD="${1:-$(nproc --all)}"
-
-CC_ADDITIONAL_FLAGS="LLVM=1 LLVM_IAS=1 \
--target aarch64-none-linux-android \
--gcc-toolchain $GCC64_DIR \
--Wno-unused-command-line-argument \
--Wno-invalid-command-line-argument \
--Wno-error=unused-function"
-
-# ---- Target Variables ----
-
-TARGET_ARCH="arm64"
-TARGET_SUBARCH="arm64"
-
-TARGET_CC="clang"
-TARGET_HOSTLD="ld.lld"
-
-TARGET_CLANG_TRIPLE="aarch64-none-linux-android-"
-
-TARGET_CROSS_COMPILE="$GCC64_DIR/bin/aarch64-linux-android-"
-TARGET_CROSS_COMPILE_COMPAT="$GCC32_DIR/bin/arm-linux-androideabi-"
-
-TARGET_BUILD_USER="$KBUILD_USER"
-TARGET_BUILD_HOST="$KBUILD_HOST"
-
-TARGET_DEVICE="phone1"
-TARGET_PRODUCT="$TARGET_DEVICE"
-
-TARGET_OUT="$(pwd)/../NOTHING_PHONE1_OUT"
-
-TARGET_DTC_FLAGS="-q"
-
-TARGET_COMPILER_STRING="$COMPILER_STRING"
-TARGET_LD_VERSION="$LD_VERSION"
-TARGET_CC_VERSION="$CC_VERSION"
-
-# ---- Kernel target parameters ----
-TARGET_KERNEL_FILE="$TARGET_OUT/arch/arm64/boot/Image"
-TARGET_KERNEL_DTB="$TARGET_OUT/arch/arm64/boot/dtb"
-TARGET_KERNEL_DTB_IMG="$TARGET_OUT/arch/arm64/boot/dtb.img"
-TARGET_KERNEL_DTBO_IMG="$TARGET_OUT/arch/arm64/boot/dtbo.img"
-TARGET_KERNEL_NAME="Kernel"
-get_kernel_version(){
-	TARGET_KERNEL_MOD_VERSION="$(make kernelversion O=$TARGET_OUT ARCH=arm64)"
-}
-
-# ---- Final kernel build parameters ----
-# ---- Build args as a bash array (fixes "target pattern contains no '%'" error) ----
-# Avoids all word-splitting / unquoted-space problems that a plain string causes.
-# KBUILD_BUILD_HOST and _USER can contain spaces; -j must never be a Makefile target.
-MAKE_ARGS=(
-	"ARCH=$TARGET_ARCH"
-	"SUBARCH=$TARGET_SUBARCH"
-	"HOSTLD=$TARGET_HOSTLD"
-	"CC=$TARGET_CC"
-	"CROSS_COMPILE=$TARGET_CROSS_COMPILE"
-	"CROSS_COMPILE_COMPAT=$TARGET_CROSS_COMPILE_COMPAT"
-	"CLANG_TRIPLE=$TARGET_CLANG_TRIPLE"
-	"LLVM=1"
-	"LLVM_IAS=1"
-	"DTC_FLAGS=$TARGET_DTC_FLAGS"
-	"O=$TARGET_OUT"
-	"KBUILD_BUILD_USER=$TARGET_BUILD_USER"
-	"KBUILD_BUILD_HOST=$TARGET_BUILD_HOST"
-	"-j$THREAD"
-)
-
-# ----  Defconfig parameters ----
-DEFCONFIG_PATH=arch/arm64/configs
-DEFCONFIG_NAME="phone1_defconfig"
-
-# ---- Time parameters ----
-START_SEC=$(date +%s)
-CURRENT_TIME=$(date '+%Y%m%d-%H%M')
-
-# ---- Setup secure keystore paths ----
-HOME="${HOME:-/tmp}"
-[ "$HOME" = "/" ] && HOME="/tmp"
-SIGNER_DIR="$HOME/.sakura"
-
-KEYSTORE="$SIGNER_DIR/keystore.p12"
-PASSFILE="$SIGNER_DIR/.store_pass"
-ALIASFILE="$SIGNER_DIR/.alias"
-ROOTCA_KEY="$SIGNER_DIR/rootCA.key"
-ROOTCA_CERT="$SIGNER_DIR/rootCA.pem"
-TENZO_KEY="$SIGNER_DIR/tenzo.key"
-TENZO_CERT="$SIGNER_DIR/tenzo.crt"
-P12_FILE="$SIGNER_DIR/tenzo.p12"
-CSR_FILE="$SIGNER_DIR/tenzo.csr"
-
-# ---- Logging / Output ----
-AK3_PATH="$TARGET_OUT/AnyKernel3"
-LOG_FILE="$AK3_PATH/build.log"
-WARNING_PATTERN="warning"
-ERROR_PATTERN="error"
-NORMAL_PATTERN="normal"
-
-# ---- Getting information about git remote, branch and commit ----
-remote=$(git remote -v 2>&1 | grep push | head -n1 | cut -f2 | sed "s/(push)//" | cut -f4 -d "/")
-domain=$(git remote -v 2>&1 | grep push | head -n1 | cut -f2 | sed "s/(push)//" | cut -f5 -d "/" | xargs)
-branch=$(git status 2>&1 | grep "On branch" | sed -e 's/On branch //g')
-commit=$(git rev-parse --short=8 HEAD)
-
-# ----  Kernel DIR ----
-KERNEL_DIR=$(pwd)
-echo -e "${GREEN}$KERNEL_DIR${NC}"
-
-# ---- Function to display build information ----
-display_build_info(){
-	echo -e "${PURPLE}***************Neutrino-Kernel**************${NC}"
-	echo -e "PRODUCT: $TARGET_DEVICE"
-	echo -e "USER: $KBUILD_USER"
-	echo -e "HOST: $KBUILD_HOST"
-	echo -e "SUBLEVEL: $(grep -E '^SUBLEVEL =' Makefile | awk '{print $3}')"
-	echo -e "${PURPLE}***************Device-Builder**************${NC}"
-	echo -e "BUILD_DEVICE: $(lsb_release -a)"
-	echo -e "Compiler: $(clang --version | head -n 1)"
-	echo -e "Core count: $(nproc)"
-	echo -e "Build Date: $(date +"%Y-%m-%d %H:%M")"
-	echo -e "${PURPLE}*************last commit details***********${NC}"
-	echo -e "Last commit (name): $(git log -1 --pretty=format:%s)"
-	echo -e "Last commit (hash): $(git log -1 --pretty=format:%H)"
-	echo -e "${PURPLE}*******************************************${NC}"
-}
-
-# ---- Function for interactive action selection with timeout ----
-choose_action(){
-	while true; do
-		echo -e "Choose an action:"
-		echo -e "${GREEN}1.👉 Install necessary packages${NC}"
-		echo -e "${GREEN}2.👉 Start kernel compilation${NC}"
-		echo -e "${GREEN}3.👉 Exit program${NC}"
-
-		# Set timeout for user input (5 seconds)
-		read -t 5 -p "Enter the action number (1/2/3): " choice
-
-		# If no input is provided within 5 seconds, default to action 1 and then 2
-		[ -z "$choice" ] && echo -e "${YELLOW}No input detected. Automatically selecting action 1.${NC}" && install_packages && echo -e "${YELLOW}Proceeding to action 2 automatically.${NC}" && compile_kernel && break
-
-		case $choice in
-			1 ) install_packages;;
-			2 ) compile_kernel;;
-			3 ) exit;;
-			* ) echo -e "${RED}Invalid choice. Please enter 1, 2, or 3.${NC}";;
-		esac
-	done
-}
-
-# Function for "smart" installation
-pkg_install() {
-	if [ -f /etc/arch-release ]; then
-		[ -n "$1" ] && sudo pacman -S --needed --noconfirm "$1"
-	else
-		[ -n "$2" ] && sudo apt-get install -y "$2"
-	fi
-}
-
-# ---- Install packages ----
-install_packages(){
-	echo -e "${YELLOW}Starting package installation...${NC}"
-
-	# pkg_install "Назва в Arch" "Назва в Debian"
-	pkg_install "bc" "bc"
-	pkg_install "bison" "bison"
-	pkg_install "base-devel" "build-essential"
-	pkg_install "zstd" "zstd"
-	pkg_install "clang" "clang"
-	pkg_install "lld" "lld"
-	pkg_install "flex" "flex"
-	pkg_install "gnupg" "gnupg"
-	pkg_install "gperf" "gperf"
-	pkg_install "ccache" "ccache"
-	pkg_install "lz4" "liblz4-tool"
-	pkg_install "sdl12-compat" "libsdl1.2-dev"
-	pkg_install "libxml2" "libxml2"
-	pkg_install "" "libxml2-utils"
-	pkg_install "libpng" "pngcrush"
-	pkg_install "schedtool" "schedtool"
-	pkg_install "squashfs-tools" "squashfs-tools"
-	pkg_install "libxslt" "xsltproc"
-	pkg_install "zlib" "zlib1g-dev"
-	pkg_install "ncurses" "libncurses5-dev"
-	pkg_install "bzip2" "bzip2"
-	pkg_install "git" "git"
-	pkg_install "gcc" "gcc"
-	pkg_install "gcc" "g++"
-	pkg_install "openssl" "libssl-dev"
-	pkg_install "openssl" "openssl"
-	pkg_install "aarch64-linux-gnu-gcc" "gcc-aarch64-linux-gnu"
-	pkg_install "llvm" "llvm"
-	pkg_install "llvm" "llvm-dev"
-	# Full LLVM binutils required for LLVM=1 kernel builds (llvm-nm, llvm-ar, llvm-objcopy, etc.)
-	pkg_install "" "llvm-14"
-	pkg_install "" "lld-14"
-	pkg_install "" "clang-14"
-	# Link llvm tools so kernel build can find them (prefers versioned over generic)
-	pkg_install "" "llvm-14-dev" || true
-	pkg_install "python-pip" "python3-pip"
-	pkg_install "cpio" "cpio"
-	pkg_install "binutils" "binutils"
-	pkg_install "zip" "zip"
-	pkg_install "dtc" "device-tree-compiler"
-	pkg_install "jdk21-openjdk" "default-jre"
-	pkg_install "jdk21-openjdk" "openjdk-21-jdk"
-
-	# Ensure LLVM tools are accessible without version suffix
-	# GitHub Actions Ubuntu may have llvm-nm-14 but not llvm-nm
-	for tool in nm ar objcopy objdump strip readelf; do
-		if ! command -v llvm-$tool &>/dev/null; then
-			for ver in 14 15 16 17 18; do
-				if command -v llvm-$tool-$ver &>/dev/null; then
-					sudo ln -sf "$(command -v llvm-$tool-$ver)" "/usr/local/bin/llvm-$tool"
-					echo -e "${GREEN}Linked llvm-$tool -> llvm-$tool-$ver${NC}"
-					break
-				fi
-			done
-		fi
-	done
-	# Same for clang and ld.lld
-	if ! command -v ld.lld &>/dev/null; then
-		for ver in 14 15 16 17 18; do
-			if command -v ld.lld-$ver &>/dev/null; then
-				sudo ln -sf "$(command -v ld.lld-$ver)" "/usr/local/bin/ld.lld"
-				echo -e "${GREEN}Linked ld.lld -> ld.lld-$ver${NC}"
-				break
-			fi
-		done
-	fi
-
-	echo -e "${GREEN}Necessary packages successfully installed.${NC}"
-}
-
-# ---- Clone Anykernel3 ----
-clone_anykernel3(){
-while true; do
-	echo -e "${YELLOW}Select branch to clone:${NC}"
-	echo -e "${BLUE}1.👉 master${NC}"
-	echo -e "${BLUE}2.👉 Custom git clone command${NC}"
-
-	# Set timeout for user input (5 seconds)
-	read -t 5 -rp "Enter your choice (1 or 2): " choice
-
-	# If no input is provided within 5 seconds, default to action 1 (Neutrino)
-	[ -z "$choice" ] && echo -e "${YELLOW}No input detected. Automatically selecting Neutrino.${NC}" && choice=1
-
-	case $choice in
-		1)
-			branch="master"
-			git clone --depth=1 https://github.com/William24hmar/AnyKernel3.git -b "$branch" "$AK3_PATH" &&
-			{ echo -e "${GREEN}Clone successful.${NC}"; break; } || echo -e "${RED}Clone failed.${NC}"
-			;;
-		2)
-			while true; do
-				read -rp "Enter the full git clone command (e.g., git clone https://github.com/username/repository.git -b branch_name): " clone_command
-				# Execute the custom command and check its success
-				eval "$clone_command" && { echo -e "${GREEN}Clone successful.${NC}"; break; } || echo -e "${RED}Clone failed. Please try again.${NC}"
-			done
-			return 0
-			;;
-		*)
-			echo -e "${RED}Invalid choice. Please try again.${NC}"
-			;;
-	esac
-done
-}
-
-# ---- Function to check for necessary tools ----
-check_tools(){
-	echo -e "${YELLOW}Checking for necessary tools...${NC}"
-	command -v clang > /dev/null 2>&1 || { echo -e "${RED}clang is not installed.${NC}"; exit 1; }
-	command -v make > /dev/null 2>&1 || { echo -e "${RED}make is not installed.${NC}"; exit 1; }
-	command -v mke2fs > /dev/null 2>&1 || { echo -e "${RED}mke2fs is not installed.${NC}"; exit 1; }
-	command -v dtc > /dev/null 2>&1 || { echo -e "${RED}dtc (Device Tree Compiler) is not installed.${NC}"; exit 1; }
-	echo -e "${GREEN}All necessary tools are installed.${NC}"
-}
-
-# ---- Function to create default kernel configuration ----
-make_defconfig(){
-	echo -e "${YELLOW}------------------------------${NC}"
-	echo -e "${YELLOW} Generating kernel configuration...${NC}"
-	# DEFCONFIG_NAME must be a bare positional arg AFTER all VAR=value pairs
-	# to avoid "target pattern contains no '%'" Makefile error
-	make "${MAKE_ARGS[@]}" "$DEFCONFIG_NAME" || { echo -e "${RED}Failed to create default kernel configuration.${NC}"; exit 1; }
-	echo -e "${GREEN}Default kernel configuration created successfully.${NC}"
-	echo -e "${YELLOW}------------------------------${NC}"
-}
-
-# ---- Function for building a kernel with color output and countdown ----
-build_kernel() {
-
-	echo -e "${YELLOW}---------------------------------------${NC}"
-	echo -e "${YELLOW} Building the kernel...${NC}"
-	echo -e "${YELLOW}---------------------------------------${NC}"
-
-	set -e  # Exit on error
-
-	# ---- Colored logger (stdout + log file) ----
-	log_echo() {
-		local color="$1"
-		shift
-		local message="$*"
-
-		echo -e "${color}${message}${NC}"
-		echo -e "${color}${message}${NC}" >> "$LOG_FILE"
-	}
-
-	# ---- Time tracking ----
-	START_SEC=$(date +%s)
-
-	TIME_COLOR="$BLUE"
-
-	declare -A COLORS=(
-		[normal]="$GREEN"
-		[warning]="$PURPLE"
-		[error]="$RED"
-	)
-
-	# ---- Kernel build (direct - no pipe subshell so exit code is preserved) ----
-	echo -e "${YELLOW}Starting make...${NC}"
-	make "${MAKE_ARGS[@]}" 2>&1 | tee "$LOG_FILE"
-	# Check make exit code via PIPESTATUS
-	if [ "${PIPESTATUS[0]}" -ne 0 ]; then
-		echo -e "${RED}ERROR: Kernel build failed! Check log above.${NC}"
-		exit 1
-	fi
-	echo -e "${GREEN}make completed successfully.${NC}"
-
-	# ---- Module installation ----
-	MODULES_DIR="$TARGET_OUT/modules_inst"
-	mkdir -p "$MODULES_DIR"
-
-	echo -e "${YELLOW}---------------------------------------${NC}"
-	echo -e "${YELLOW} Installing kernel modules...${NC}"
-	echo -e "${YELLOW}---------------------------------------${NC}"
-
-	grep -q '^CONFIG_MODULES=y$' "$TARGET_OUT/.config" && {
-	make "${MAKE_ARGS[@]}" INSTALL_MOD_PATH=modules_inst INSTALL_MOD_STRIP=1 modules_install
-
-		echo -e "${GREEN}Kernel modules ready (external .ko files available)${NC}"
-	} || grep -q '^# CONFIG_MODULES is not set$' "$TARGET_OUT/.config" && {
-		echo -e "${PURPLE}# CONFIG_MODULES is not set — all features built-in to kernel${NC}"
-	} || {
-		echo -e "${RED}Unexpected CONFIG_MODULES value — check .config!${NC}"
-	}
-
-	# ---- Total build time ----
-	END_SEC=$(date +%s)
-	TOTAL_SEC=$(( END_SEC - START_SEC ))
-
-	echo -e "${GREEN}Kernel build took $(( TOTAL_SEC / 60 ))m $(( TOTAL_SEC % 60 ))s${NC}" \
-		| tee -a "$LOG_FILE"
-}
-
-# ---- Function to link all dtb files -----
-link_all_dtb_files(){
-	echo -e "${YELLOW}Linking all dtb and dtbo files...${NC}"
-
-	# Ensure the output directories exist
-	mkdir -p $TARGET_OUT/arch/arm64/boot
-
-	# Link .dtb files
-	echo -e "${YELLOW}Linking .dtb files...${NC}"
-	find $TARGET_OUT/arch/arm64/boot/dts/ -name '*.dtb' -exec cat {} + > $TARGET_OUT/arch/arm64/boot/dtb || echo -e "${RED}Failed to link .dtb files.${NC}"
-
-	echo -e "${YELLOW}Linking completed.${NC}"
-}
-
-# ---- Generate a secure keystore with a trusted cert for ZIP/APK signing ----
-generate_secure_keystore() {
-	[[ -f "$KEYSTORE" ]] && echo -e "${GREEN}✔ Keystore already exists: $KEYSTORE${NC}" && return
-
-	echo -e "${YELLOW}Creating new keystore and full trust chain...${NC}"
-
-	rm -rf "$SIGNER_DIR"
-	mkdir -p "$SIGNER_DIR" && chmod 700 "$SIGNER_DIR"
-
-	PASS=$(tr -dc A-Za-z0-9 </dev/urandom | head -c 18)
-	UNIQUE_ID=$(date +%Y%m%d_%H%M%S)
-	KEYALIAS="tenzoKey_${UNIQUE_ID}"
-
-	echo "$PASS" > "$PASSFILE"
-	echo "$KEYALIAS" > "$ALIASFILE"
-	chmod 600 "$PASSFILE" "$ALIASFILE"
-
-	echo -e "${CYAN}Generating root CA...${NC}" &&
-	openssl genrsa -out "$ROOTCA_KEY" 4096 &&
-	openssl req -x509 -new -nodes -key "$ROOTCA_KEY" -sha256 -days 9125 \
-		-out "$ROOTCA_CERT" -subj "/CN=Tenzo Root CA/O=William24hmar/C=UA" ||
-	{ echo -e "${RED}✘ Root CA generation failed${NC}"; return 1; }
-
-	echo -e "${CYAN}Generating Tenzo keypair and CSR...${NC}" &&
-	openssl genrsa -out "$TENZO_KEY" 4096 &&
-	openssl req -new -key "$TENZO_KEY" -out "$CSR_FILE" \
-		-subj "/CN=Tenzo, OU=Root, O=William24hmar, L=UA, ST=Ukraine, C=UA" ||
-	{ echo -e "${RED}✘ Keypair or CSR failed${NC}"; return 1; }
-
-	openssl x509 -req -in "$CSR_FILE" -CA "$ROOTCA_CERT" -CAkey "$ROOTCA_KEY" \
-		-CAcreateserial -out "$TENZO_CERT" -sha256 -days 365 || \
-	{ echo -e "${RED}✘ Signing failed${NC}"; return 1; }
-
-	echo -e "${CYAN}Exporting to PKCS#12...${NC}" &&
-	openssl pkcs12 -export \
-		-inkey "$TENZO_KEY" \
-		-in "$TENZO_CERT" \
-		-certfile "$ROOTCA_CERT" \
-		-out "$P12_FILE" \
-		-password pass:"$PASS" \
-		-name "$KEYALIAS" ||
-	{ echo -e "${RED}✘ PKCS#12 export failed${NC}"; return 1; }
-
-	keytool -importkeystore \
-		-srckeystore "$P12_FILE" -srcstoretype PKCS12 -srcstorepass "$PASS" \
-		-destkeystore "$KEYSTORE" -deststoretype PKCS12 -deststorepass "$PASS" \
-		-alias "$KEYALIAS" -noprompt || \
-	{ echo -e "${RED}✘ PKCS12 import failed${NC}"; return 1; }
-
-	keytool -importcert -trustcacerts -alias "rootCA_${UNIQUE_ID}" -file "$ROOTCA_CERT" \
-		-keystore "$KEYSTORE" -storepass "$PASS" -noprompt ||
-	{ echo -e "${RED}✘ Failed to add rootCA to keystore${NC}"; return 1; }
-
-	# Java truststore
-	echo -e "${CYAN}Adding Root CA to Java truststore...${NC}"
-
-	sudo keytool -list -cacerts -storepass changeit -alias "tenzoRoot" >/dev/null 2>&1 && \
-	sudo keytool -delete -cacerts -storepass changeit -alias "tenzoRoot" -noprompt
-
-	sudo keytool -importcert -alias "tenzoRoot" -file "$ROOTCA_CERT" \
-		-cacerts -storepass changeit -noprompt && \
-		echo -e "${GREEN}✔ Added to Java truststore (cacerts)${NC}" || \
-		echo -e "${RED}✘ Failed to add to Java truststore${NC}"
-
-	echo -e "${GREEN}✔ Keystore created: $KEYSTORE${NC}"
-	show_fingerprint
-}
-
-# ----  SIGN ZIP FILE ----
-sign_zip() {
-	ZIP="$1"
-	OUT="$2"
-
-	[[ -f "$ZIP" ]] || {
-		echo -e "${RED}✘ ZIP file not found: $ZIP${NC}"
-		exit 1
-	}
-
-	generate_secure_keystore
-
-	PASS=$(cat "$PASSFILE")
-	KEYALIAS=$(cat "$ALIASFILE")
-
-	cp "$ZIP" "$OUT"
-
-	echo -e "${CYAN}Signing ZIP with timestamp...${NC}"
-	SIGNING_OUTPUT=$(jarsigner -keystore "$KEYSTORE" -storepass "$PASS" -keypass "$PASS" \
-		-sigalg SHA256withRSA -digestalg SHA-256 \
-		-tsa http://timestamp.digicert.com \
-		"$OUT" "$KEYALIAS" 2>&1)
-
-	echo "$SIGNING_OUTPUT" | grep -q "jar signed." &&
-	{
-		echo -e "${GREEN}✔ Signed successfully: $OUT${NC}"
-		echo "$SIGNING_OUTPUT" | grep -q "The timestamp will expire" &&
-			echo -e "${YELLOW}$(echo "$SIGNING_OUTPUT" | grep "The timestamp will expire")${NC}"
-	} || {
-		echo -e "${RED}❌ Signing failed!${NC}"
-		echo "$SIGNING_OUTPUT"
-		exit 1
-	}
-}
-
-# ---- SHOW FINGERPRINT ----
-show_fingerprint() {
-	[[ -f "$KEYSTORE" && -f "$PASSFILE" && -f "$ALIASFILE" ]] &&
-	{
-		PASS=$(cat "$PASSFILE")
-		KEYALIAS=$(cat "$ALIASFILE")
-		echo -e "${CYAN}SHA256 Fingerprint:${NC}"
-		keytool -list -v -keystore "$KEYSTORE" -storepass "$PASS" -alias "$KEYALIAS" 2>/dev/null | grep "SHA256:"
-	} || {
-		echo -e "${RED}✘ Cannot display fingerprint. Keystore or data missing.${NC}"
-	}
-}
-
-# ----  Generate flashable archive and sign it (with modules) ----
-generate_flashable() {
-	echo -e "${YELLOW}------------------------------ ${NC}"
-	echo -e "${YELLOW} Generating flashable kernel ${NC}"
-	echo -e "${YELLOW}------------------------------ ${NC}"
-
-	AK3_PATH="$TARGET_OUT/AnyKernel3"
-	ANYKERNEL_PATH="AnyKernel3"
-
-	echo -e "${YELLOW} Fetching AnyKernel ${NC}"
-
-	cd "$TARGET_OUT" || return 1
-
-	# ---------------- Kernel files ----------------
-	echo -e "${YELLOW} Copying kernel files ${NC}"
-
-	# Find Image - check all possible names this kernel may produce
-	KERNEL_IMAGE=""
-	for img in "arch/arm64/boot/Image" "arch/arm64/boot/Image.gz" "arch/arm64/boot/Image.gz-dtb" "arch/arm64/boot/Image-dtb"; do
-		if [ -f "$TARGET_OUT/$img" ]; then
-			KERNEL_IMAGE="$TARGET_OUT/$img"
-			echo -e "${GREEN}Found kernel image: $KERNEL_IMAGE${NC}"
-			break
-		fi
-	done
-
-	if [ -z "$KERNEL_IMAGE" ]; then
-		echo -e "${RED}ERROR: No kernel Image found in $TARGET_OUT/arch/arm64/boot/${NC}"
-		ls -la "$TARGET_OUT/arch/arm64/boot/" 2>/dev/null || echo "boot dir does not exist"
-		exit 1
-	fi
-
-	# Copy Image - always copy as 'Image' so AnyKernel3 finds it
-	cp -f "$KERNEL_IMAGE" "$ANYKERNEL_PATH/Image" || { echo -e "${RED}Failed to copy Image${NC}"; exit 1; }
-	echo -e "${GREEN}✔ Image copied${NC}"
-
-	# Copy DTB files (non-fatal if missing)
-	[ -f "$TARGET_KERNEL_DTB" ]      && cp -f "$TARGET_KERNEL_DTB"      "$ANYKERNEL_PATH/" || echo -e "${YELLOW}dtb not found, skipping${NC}"
-	[ -f "$TARGET_KERNEL_DTB_IMG" ]  && cp -f "$TARGET_KERNEL_DTB_IMG"  "$ANYKERNEL_PATH/" || echo -e "${YELLOW}dtb.img not found, skipping${NC}"
-	[ -f "$TARGET_KERNEL_DTBO_IMG" ] && cp -f "$TARGET_KERNEL_DTBO_IMG" "$ANYKERNEL_PATH/" || echo -e "${YELLOW}dtbo.img not found, skipping${NC}"
-
-	# ----------- MODULE + VENDOR_DLKM IMAGE LOGIC -----------
-
-	grep -q '^CONFIG_MODULES=y$' "$TARGET_OUT/.config" 2>/dev/null && {
-
-		echo -e "${YELLOW}-3 Creating vendor_dlkm.img ${NC}"
-
-		TEMP_DIR="$TARGET_OUT/vendor_dlkm_files"
-		MODULE_DIR="$TEMP_DIR/lib/modules"
-
-		mkdir -p "$MODULE_DIR"
-
-		# Copy kernel modules
-		find "$TARGET_OUT/modules_inst" -type f -name "*.ko" | while read -r module; do
-			cp "$module" "$MODULE_DIR/"
-		done
-
-		# Copy vendor_dlkm/etc
-		[ -d "$ANYKERNEL_PATH/vendor_dlkm/etc" ] && {
-			mkdir -p "$TEMP_DIR/etc"
-			cp -r "$ANYKERNEL_PATH/vendor_dlkm/etc/"* "$TEMP_DIR/etc/"
-		}
-
-		# Copy vendor_dlkm/lib
-		[ -d "$ANYKERNEL_PATH/vendor_dlkm/lib" ] && {
-			mkdir -p "$TEMP_DIR/lib"
-			cp -r "$ANYKERNEL_PATH/vendor_dlkm/lib/"* "$TEMP_DIR/lib/"
-		}
-
-		# Remove placeholder
-		rm -f "$TEMP_DIR/lib/placeholder"
-
-		# Fix module dependencies
-		[ -f "$MODULE_DIR/modules.dep" ] && {
-			sed -i \
-				's@\(^kernel/[^: ]*/\)\([^: ]*\.ko\)@/lib/modules/\2@g' \
-				"$MODULE_DIR/modules.dep"
-		}
-
-		# Create vendor_dlkm.img
-		dd if=/dev/zero of="$ANYKERNEL_PATH/vendor_dlkm.img" bs=1M count=512
-
-		MKE2FS=$MKE2FS mke2fs \
-			-O "extent,huge_file" \
-			-T largefile \
-			-L vendor_dlkm \
-			-d "$TEMP_DIR" \
-			"$ANYKERNEL_PATH/vendor_dlkm.img"
-
-		e2fsck -f "$ANYKERNEL_PATH/vendor_dlkm.img"
-		resize2fs -M "$ANYKERNEL_PATH/vendor_dlkm.img"
-
-		# Cleanup
-		rm -rf "$TEMP_DIR"
-		rm -rf "$ANYKERNEL_PATH/vendor_dlkm"
-
-	} || {
-
-		echo -e "${YELLOW} CONFIG_MODULES is not 'y' → Skipping vendor_dlkm.img ${NC}"
-		rm -rf "$ANYKERNEL_PATH/vendor_dlkm"
-		rm -f  "$ANYKERNEL_PATH/vendor_dlkm.img"
-	}
-
-	# ------------------------------------------------------
-
-	echo -e "${YELLOW} Packing flashable kernel ${NC}"
-
-	CURRENT_TIME="${CURRENT_TIME:-$(date +"%Y%m%d-%H%M")}"
-	CLEAN_TIME="$(echo "$CURRENT_TIME" | sed 's/[^a-zA-Z0-9._-]//g')"
-
-	cd "$ANYKERNEL_PATH" || {
-		echo -e "${RED}Failed to enter $ANYKERNEL_PATH${NC}"
-		exit 1
-	}
-
-	FLASHABLE_ZIP="Neutrino-$CLEAN_TIME.zip"
-	SIGNED_ZIP="Neutrino-$CLEAN_TIME-signed.zip"
-
-	zip -q -r "$FLASHABLE_ZIP" * \
-		-x README.md \
-		   changelog.txt \
-		   defconfig \
-		   kernel-changelog.txt \
-		   build.log || {
-		echo -e "${RED}Failed to pack flashable kernel${NC}"
-		exit 1
-	}
-
-	echo -e "${YELLOW} Signing ZIP file securely... ${NC}"
-	sign_zip "$FLASHABLE_ZIP" "$SIGNED_ZIP"
-
-	echo -e "${GREEN}✔ Flashable signed zip ready:${NC} $TARGET_OUT/$ANYKERNEL_PATH/$SIGNED_ZIP"
-
-	cd "$KERNEL_DIR" || return 1
-}
-
-# ---- Save kernel configuration with timeout ----
-save_defconfig() {
-	echo -e "${YELLOW}------------------------------${NC}"
-	echo -e "${YELLOW} Saving kernel configuration...${NC}"
-	echo -e "${YELLOW}------------------------------${NC}"
-
-	echo -en "${PURPLE}Do you want to save the kernel configuration?${NC} (y/n): "
-
-	read -t 3 answer
-	[ -z "$answer" ] && answer="n"
-
-	case $answer in
-		[Yy]* )
-			[ -f "$TARGET_OUT/.config" ] && cp "$TARGET_OUT/.config" "$AK3_PATH/defconfig" && \
-			END_SEC=$(date +%s) && \
-			COST_SEC=$((END_SEC - START_SEC)) && \
-			echo -e "${YELLOW}Completed. Kernel configuration saved to ${AK3_PATH}/defconfig${NC}" && \
-			echo -e "${YELLOW}Kernel configuration save took ${COST_SEC} seconds.${NC}" || \
-			echo -e "${RED}Error: '$TARGET_OUT/.config' not found. Cannot save configuration.${NC}"
-			;;
-		[Nn]* )
-			echo -e "${YELLOW}Skipping kernel configuration save.${NC}"
-			;;
-		* )
-			echo -e "${RED}Invalid input. Defaulting to no save.${NC}"
-			;;
-	esac
-}
-
-# ----  Clean ----
-clean() {
-	echo -e "${YELLOW}Cleaning source tree and build files...${NC}"
-	make mrproper -j$THREAD > /dev/null 2>&1
-	make clean -j$THREAD > /dev/null 2>&1
-	rm -rf $TARGET_OUT
-	rm -rf .config
-	rm -rf output
-	echo -e "${GREEN}Clean completed.${NC}"
-}
-
-# ---- Setup colour for the script ----
-purple='\033[0;35m'
-
-# Function to show an informational message
 msg() {
-	echo -e "\e[1;32m$*\e[0m"
+    echo -e "\e[1;32m$*\e[0m"
 }
 
-err() {
-	echo -e "\e[1;41m$*\e[0m"
-	exit 1
+error() {
+    echo -e ""
+    echo -e "$R error: $W" "$@"
+    echo -e ""
+    exit 1
 }
 
-# ---- Function to create a changelog file with the last 400 commits and move it to $TARGET_OUT ----
-create_changelog() {
-	# Define the filename for the changelog
-	local changelog_file="changelog.txt"
-
-	# Use git log to get the last 400 commits and format them
-	git log -n 400 --pretty=format:"%h - %s (%an)" > "$changelog_file"
-
-	# Print the location of the changelog file
-	msg "${purple}Changelog saved to $changelog_file ${white}"
-
-	# Add a dash before each commit line for better readability
-	sed -i -e "s/^/- /" "$changelog_file"
-
-	# Move the changelog file to $TARGET_OUT
-	mv "$changelog_file" "$AK3_PATH/"
+success() {
+    echo -e ""
+    echo -e "$G success: $W" "$@"
+    echo -e ""
+    exit 0
 }
 
-# ----  End Build Info ----
-# Function to display kernel version and config information
-display_kernel_version_info() {
-	# Find phone1_defconfig file
-	SAKURA_DEFCONFIG=$(find . -name 'phone1_defconfig' -print -quit)
-
-	[ -z "$SAKURA_DEFCONFIG" ] && echo -e "${RED}phone1_defconfig not found!${NC}" && return 1
-
-	echo -e "${GREEN}===================END_BUILD=================${NC}"
-	echo -e "${PURPLE}***************Neutrino-Kernel**************${NC}"
-	echo -e "USER: $KBUILD_USER"
-	echo -e "HOST: $KBUILD_HOST"
-	echo -e "${PURPLE}*************last commit details************${NC}"
-	echo -e "Last commit (name): $(git log -1 --pretty=format:%s)"
-	echo -e "Last commit (hash): $(git log -1 --pretty=format:%H)"
-	echo -e "${PURPLE}********************************************${NC}"
-	echo -e "VERSION: $(grep -E '^VERSION =' Makefile | awk '{print $3}')"
-	echo -e "PATCHLEVEL: $(grep -E '^PATCHLEVEL =' Makefile | awk '{print $3}')"
-	echo -e "SUBLEVEL: $(grep -E '^SUBLEVEL =' Makefile | awk '{print $3}')"
-	echo -e "EXTRAVERSION: $(grep -E '^EXTRAVERSION =' Makefile | awk '{print $3}')"
-	echo -e "NAME: $(grep -E '^NAME =' Makefile | awk '{print $3}')"
-	echo -e "CONFIG_LOCALVERSION: $(grep -E '^CONFIG_LOCALVERSION=' $SAKURA_DEFCONFIG | awk -F'=' '{print $2}')"
-	echo -e "CONFIG_UNAME_OVERRIDE_STRING: $(grep -E '^CONFIG_UNAME_OVERRIDE_STRING=' $SAKURA_DEFCONFIG | awk -F'=' '{print $2}')"
-	echo -e "${PURPLE}**********************************************${NC}"
+inform() {
+    if [[ $SILENCE != 1 || $* =~ "--force" ]]; then
+        echo -e ""
+        echo -e "$B info: $W" "$@" "$G" | sed 's/--force//'
+        echo -e ""
+    fi
 }
 
-# ---- Kernel compilation function ----
-compile_kernel() {
-	random_color
-	ascii_art_logo
-	clean
-	check_tools
-	clone_anykernel3
-	make_defconfig
-	display_build_info
-	create_changelog
-	save_defconfig
-	build_kernel
-	link_all_dtb_files
-	generate_flashable
-	display_kernel_version_info
+function countdown() {
+    for ((i = $1; i > 0; i--)); do
+        echo "Countdown: $i"
+        sleep 1
+    done
 }
 
-# ----  Prompt successive steps ----
-choose_action
+muke() {
+    make "$@" "${MAKE_ARGS[@]}"
+}
 
-echo -e "${GREEN}Done.${NC}"
+usage() {
+    inform " ./build.sh <arg>
+        --device     Sets the device for kernel build (e.g. lahaina).
+        --clean      Clean build directory before building.
+        --regen      Regenerates defconfig.
+        --obj        Builds specified objects.
+        --dtbs       Builds dtbs, dtbo & dtbo.img.
+        --dtb_zip    Builds flashable zip with dtbs.
+        --log        Save build log to log.txt.
+        --silence    Silence shell output of Kbuild."
+    exit 2
+}
+
+############################################################################
+#                          USER / HOST DETAILS
+############################################################################
+
+KBUILD_USER="Willay"
+KBUILD_HOST="GNU/Linux-2025.2"
+
+############################################################################
+#                           DIRECTORY PATHS
+############################################################################
+
+KERNEL_DIR=$(pwd)
+TLDR="$(pwd)/toolchains"
+AK3_DIR="$(pwd)/AnyKernel3"
+AKVDR="$AK3_DIR/modules/vendor/lib/modules"
+AKVRD="$AK3_DIR/vendor_ramdisk/lib/modules"
+DTB_PATH="$KERNEL_DIR/work/arch/arm64/boot/dts"
+DTBO_PATH="$KERNEL_DIR/work/arch/arm64/boot"
+
+############################################################################
+#                         SNAPDRAGON CLANG 19 SETUP
+#
+#   sdclang19.tgz extracts a top-level "linux-x86_64/" directory.
+#   We place it under toolchains/sdclang/ so the final layout is:
+#
+#       toolchains/sdclang/linux-x86_64/bin/clang
+#       toolchains/sdclang/linux-x86_64/bin/arm-ar
+#       toolchains/sdclang/linux-x86_64/bin/arm-nm
+#       toolchains/sdclang/linux-x86_64/bin/arm-strip
+#       toolchains/sdclang/linux-x86_64/bin/arm-elfcopy
+#       toolchains/sdclang/linux-x86_64/bin/arm-link     (ld.qcld)
+#       toolchains/sdclang/linux-x86_64/bin/llvm-objdump
+#       toolchains/sdclang/linux-x86_64/bin/arm-readelf
+#       toolchains/sdclang/linux-x86_64/lib/             (runtime libs)
+#
+#   Binary names are per the Qualcomm Snapdragon LLVM ARM Utilities guide
+#   (80-VB419-103 Rev. A) Table 2-1.
+############################################################################
+
+SDCLANG_DIR="$TLDR/sdclang"
+SDCLANG_BIN="$SDCLANG_DIR/linux-x86_64/bin"
+SDCLANG_LIB="$SDCLANG_DIR/linux-x86_64/lib"
+SDCLANG_URL="https://github.com/khuza08/snapdragon-clang/releases/download/sdclang-19.0.0-release/sdclang19.tgz"
+
+setup_toolchain() {
+    msg "|| Setting up Snapdragon Clang 19 Toolchain ||"
+
+    # Create toolchains dir if needed
+    if [ ! -d "$TLDR" ]; then
+        mkdir -p "$TLDR"
+        echo -e "$green Directory '$TLDR' created. $white"
+    fi
+
+    # Download & extract sdclang if not already present
+    if [ ! -d "$SDCLANG_BIN" ] || [ ! -f "$SDCLANG_BIN/clang" ]; then
+        echo -e "$blue << Snapdragon Clang 19 not found, downloading... >> $white"
+        mkdir -p "$SDCLANG_DIR"
+
+        # Prefer aria2c for fast multi-connection download, fallback to wget
+        if command -v aria2c &>/dev/null; then
+            aria2c -x 16 -s 16 --dir="$TLDR" --out="sdclang19.tgz" "$SDCLANG_URL" \
+                || error "Download failed with aria2c"
+        else
+            wget --progress=bar:force -O "$TLDR/sdclang19.tgz" "$SDCLANG_URL" \
+                || error "Download failed with wget"
+        fi
+
+        echo -e "$blue << Extracting Snapdragon Clang 19... >> $white"
+        # tgz extracts to linux-x86_64/ — extract directly into $SDCLANG_DIR
+        tar xf "$TLDR/sdclang19.tgz" -C "$SDCLANG_DIR" \
+            || error "Extraction failed. Check the archive."
+        rm -f "$TLDR/sdclang19.tgz"
+
+        echo -e "$green << Snapdragon Clang 19 ready! >> $white"
+    else
+        echo -e "$yellow << Snapdragon Clang 19 found, skipping download >> $white"
+    fi
+
+    # Export PATH to sdclang bin directory (as per sdclang README instructions)
+    export PATH="$SDCLANG_BIN:$PATH"
+
+    # Export runtime library path so sdclang binaries can find their shared libs
+    export LD_LIBRARY_PATH="$SDCLANG_LIB:$LD_LIBRARY_PATH"
+
+    # Required kernel build flags
+    export ARCH=arm64
+    export SUBARCH=ARM64
+    export CROSS_COMPILE=aarch64-linux-gnu-
+    export CROSS_COMPILE_ARM32=arm-linux-gnueabi-
+
+    # Verify clang is accessible
+    if ! command -v clang &>/dev/null; then
+        error "clang not found at $SDCLANG_BIN\n  Expected layout: $SDCLANG_DIR/linux-x86_64/bin/clang\n  Check the extracted archive structure."
+    fi
+
+    # Get compiler version string for build info display
+    C_NAME=$(clang --version | head -n 1)
+    C_NAME_32="$C_NAME"
+
+    # ------------------------------------------------------------------
+    # MAKE_ARGS — all sdclang-specific tool mappings
+    #
+    # Per Qualcomm LLVM ARM Utilities guide (Table 2-1), sdclang provides
+    # its own arm-prefixed binutils replacing the GNU equivalents:
+    #
+    #   CC=clang           → Snapdragon clang compiler driver
+    #   LLVM=1             → Tell the kernel build system to use LLVM tools
+    #   LLVM_IAS=1         → Use clang's integrated assembler (not GNU as)
+    #   AR=arm-ar          → Snapdragon archiver (instead of GNU ar)
+    #   NM=arm-nm          → Snapdragon symbol lister (instead of GNU nm)
+    #   OBJCOPY=arm-elfcopy → Snapdragon object copier (instead of objcopy)
+    #   OBJDUMP=llvm-objdump → Snapdragon object viewer (instead of objdump)
+    #   READELF=arm-readelf → Snapdragon ELF viewer (instead of readelf)
+    #   STRIP=arm-strip     → Snapdragon symbol stripper (instead of strip)
+    #   HOSTLD=arm-link     → Snapdragon QC linker / ld.qcld for host
+    #   HOSTCC=clang        → sdclang for host C compilation
+    #   HOSTCXX=clang++     → sdclang for host C++ compilation
+    # ------------------------------------------------------------------
+    MAKE_ARGS=(
+        "O=work"
+        "ARCH=arm64"
+        "SUBARCH=ARM64"
+        "CC=clang"
+        "HOSTCC=clang"
+        "HOSTCXX=clang++"
+        "CROSS_COMPILE=aarch64-linux-gnu-"
+        "CROSS_COMPILE_ARM32=arm-linux-gnueabi-"
+        "LLVM=1"
+        "LLVM_IAS=1"
+        "AR=arm-ar"
+        "NM=arm-nm"
+        "OBJCOPY=arm-elfcopy"
+        "OBJDUMP=llvm-objdump"
+        "READELF=arm-readelf"
+        "STRIP=arm-strip"
+        "HOSTLD=arm-link"
+        "LD_LIBRARY_PATH=$SDCLANG_LIB"
+        "DTC_FLAGS+=-q"
+        "PATH=$SDCLANG_BIN:$PATH"
+        "KBUILD_BUILD_USER=$KBUILD_USER"
+        "KBUILD_BUILD_HOST=$KBUILD_HOST"
+    )
+
+    # Append build.config.common entries if file exists
+    if [[ -f build.config.common ]]; then
+        MAKE_ARGS+=("$(head -1 build.config.common)" "$(head -2 build.config.common | tail -1)")
+    fi
+
+    echo -e "$green << Compiler  : $C_NAME >> $white"
+    echo -e "$green << Toolchain : $SDCLANG_BIN >> $white"
+}
+
+############################################################################
+#                          ENVIRONMENT SETUP
+############################################################################
+
+setup_environment() {
+    if [ -f /etc/os-release ]; then
+        . /etc/os-release
+        OS=$NAME
+        VER=$VERSION_ID
+    else
+        OS=$(uname -s)
+        VER=$(uname -r)
+    fi
+    echo -e "$cyan OS: $OS $VER $white"
+
+    AKHILNARANG="environment"
+    if [[ "$OS" == *"SUSE"* ]] || [[ "$OS" == *"Regata"* ]]; then
+        if [[ ! -d "$AKHILNARANG" ]]; then
+            git clone --depth=1 https://github.com/TogoFire/scripts -b akh ${AKHILNARANG}
+            cd "${AKHILNARANG}" && bash setup/opensuse.sh && cd ..
+        fi
+    elif [[ "$OS" == *"Fedora"* ]] || [[ "$OS" == *"Nobara"* ]] || [[ "$OS" == *"Ultramarine"* ]] || [[ "$OS" == *"Rocky"* ]]; then
+        if [[ ! -d "$AKHILNARANG" ]]; then
+            git clone --depth=1 https://github.com/TogoFire/scripts -b akh ${AKHILNARANG}
+            cd "${AKHILNARANG}" && bash setup/fedora.sh && cd ..
+        fi
+    elif [[ "$OS" == *"Arch"* ]] || [[ "$OS" == *"Manjaro"* ]] || [[ "$OS" == *"Endeavour"* ]] || [[ "$OS" == *"Garuda"* ]]; then
+        if [[ ! -d "$AKHILNARANG" ]]; then
+            git clone --depth=1 https://github.com/akhilnarang/scripts ${AKHILNARANG}
+            cd "${AKHILNARANG}" && bash setup/arch-manjaro.sh && cd ..
+        fi
+    else
+        if [[ ! -d "$AKHILNARANG" ]]; then
+            git clone --depth=1 https://github.com/TogoFire/scripts -b akh ${AKHILNARANG}
+            cd "${AKHILNARANG}" && bash setup/android_build_env.sh && cd ..
+        fi
+    fi
+}
+
+############################################################################
+#                             ANYKERNEL3 CLONE
+############################################################################
+
+setup_anykernel() {
+    msg "|| Cloning AnyKernel3 ||"
+    if [[ ! -d "AnyKernel3" ]]; then
+        echo -e "$yellow AnyKernel3 not found, downloading... $white"
+        git clone --depth=1 https://github.com/William24hmar/AnyKernel3.git -b master AnyKernel3
+    else
+        echo -e "$yellow AnyKernel3 found, skipping $white"
+    fi
+
+    cd AnyKernel3
+    CURRENT_VERSION=$(git branch -a | grep '*' | awk '{print $2}' | sed 's/^[[:alpha:]]\///')
+    if [[ -n "$CURRENT_VERSION" ]]; then
+        ANYK_VERSION="$CURRENT_VERSION"
+        echo -e "$greenish_yellow AnyKernel version: $ANYK_VERSION $white"
+    else
+        echo -e "$red Could not detect AnyKernel version! $white"
+        exit 1
+    fi
+    cd ..
+}
+
+############################################################################
+#                              CLEAN-UP
+############################################################################
+
+cleanup() {
+    echo -e "${orange_yellow} Clean-up... ${white}"
+    rm -rf out/* work/* error.log changelog/* ./*.tar.gz
+
+    if [[ -d "AnyKernel3" ]]; then
+        pushd AnyKernel3 >/dev/null 2>&1
+        rm -f Image dtb *.img *.zip
+        popd >/dev/null 2>&1
+    fi
+}
+
+############################################################################
+#                            CHANGELOG
+############################################################################
+
+generate_changelog() {
+    CHANGELOG_DIR="changelog"
+    CHANGELOG_FILE="$CHANGELOG_DIR/kernel-changelog.txt"
+    [ ! -d "$CHANGELOG_DIR" ] && mkdir "$CHANGELOG_DIR"
+    git log -n 350 --pretty=format:"%h - %s (%an)" > "$CHANGELOG_FILE"
+    sed -i -e "s/^/- /" "$CHANGELOG_FILE"
+    echo -e "${purple} Changelog saved to $CHANGELOG_FILE ${white}"
+}
+
+############################################################################
+#                            CONFIG GENERATOR
+############################################################################
+
+config_generator() {
+    if [[ -z $CODENAME ]]; then
+        error "Codename not set, cannot proceed"
+    fi
+
+    DFCF="vendor/${CODENAME}-${SUFFIX}_defconfig"
+
+    if [[ ! -f arch/arm64/configs/$DFCF ]]; then
+        inform "Generating defconfig"
+        export "${MAKE_ARGS[@]}" "TARGET_BUILD_VARIANT=user"
+        bash scripts/gki/generate_defconfig.sh phone1_defconfig vendor/lahaina_QGKI.config
+        muke "$DFCF" vendor/lahaina_QGKI.config savedefconfig
+        cat work/defconfig > arch/arm64/configs/"$DFCF"
+    else
+        inform "Generating .config"
+        muke "$DFCF" savedefconfig
+    fi
+
+    if [[ $TEST == "1" ]]; then
+        ./scripts/config --file work/.config -d CONFIG_LTO_CLANG
+        ./scripts/config --file work/.config -d CONFIG_HEADERS_INSTALL
+    fi
+}
+
+config_regenerator() {
+    config_generator
+    inform "Regenerating defconfig"
+    cat work/defconfig > arch/arm64/configs/"$DFCF"
+    success "Regeneration completed"
+}
+
+############################################################################
+#                             OBJ / DTB BUILDERS
+############################################################################
+
+obj_builder() {
+    [[ -z $OBJ ]] && error "obj not defined"
+    config_generator
+    inform "Building $OBJ"
+    if [[ $OBJ =~ "defconfig" ]]; then
+        muke "$OBJ"
+    else
+        muke -j"$(nproc --all)" INSTALL_HDR_PATH="headers" "$OBJ"
+    fi
+    [[ $TEST == "1" ]] && rm -rf arch/arm64/configs/phone1-${SUFFIX}_defconfig
+    [[ $DTB_ZIP != "1" ]] && exit 0
+}
+
+dtb_zip() {
+    obj_builder
+    source work/.config
+    [[ ! -d $AK3_DIR ]] && error "AnyKernel not present, cannot zip"
+    [[ ! -d "$KERNEL_DIR/out" ]] && mkdir "$KERNEL_DIR/out"
+    mv -f "$DTBO_PATH"/*.img "$AK3_DIR"
+    find "$DTB_PATH"/vendor/*/* -name '*.dtb' -exec cat {} + > "$AK3_DIR"/dtb
+    cd "$AK3_DIR" || exit
+    make zip VERSION="$(echo "$CONFIG_LOCALVERSION" | cut -c 8-)-dtbs-only"
+    cp ./*-signed.zip "$KERNEL_DIR"/out
+    make clean
+    cd "$KERNEL_DIR" || exit
+    success "dtbs zip built"
+}
+
+############################################################################
+#                             KERNEL BUILDER
+############################################################################
+
+kernel_builder() {
+    if [[ $BUILD == "clean" ]]; then
+        inform "Cleaning work directory..."
+        muke -s clean mrproper distclean
+    fi
+
+    config_generator
+
+    BUILD_START=$(date +"%s")
+    source work/.config
+    MOD_NAME="$(muke kernelrelease -s)"
+    KERNEL_VERSION=$(echo "$MOD_NAME" | cut -c -7)
+
+    inform --force "
+    *************Build Triggered*************
+
+    CI         : $KBUILD_HOST
+    Core count : $(nproc)
+    Device     : $DEVICENAME
+    Codename   : $CODENAME
+    Compiler   : $C_NAME
+    Kernel Name: $MOD_NAME
+    Linux Ver  : $KERNEL_VERSION
+    Build Date : $(date +"%Y-%m-%d %H:%M")
+
+    *****************************************
+    "
+
+    if [[ $LOG != 1 ]]; then
+        muke -j"$(nproc --all)"
+    else
+        muke -j"$(nproc --all)" 2>&1 | tee log.txt
+    fi
+
+    if [[ $CONFIG_MODULES == "y" ]]; then
+        muke -j"$(nproc --all)" \
+            'modules_install' \
+            INSTALL_MOD_STRIP=1 \
+            INSTALL_MOD_PATH="modules"
+    fi
+
+    BUILD_END=$(date +"%s")
+    DIFF=$(("$BUILD_END" - "$BUILD_START"))
+
+    zipper
+}
+
+############################################################################
+#                                 ZIPPER
+############################################################################
+
+zipper() {
+    TARGET="arch/arm64/boot/Image"
+
+    [[ ! -f $KERNEL_DIR/work/$TARGET ]] && error "Kernel image not found"
+    [[ ! -d $AK3_DIR ]] && error "AnyKernel not present, cannot zip"
+    [[ ! -d "$KERNEL_DIR/out" ]] && mkdir "$KERNEL_DIR/out"
+
+    cd "$AK3_DIR" || exit
+    cd "$KERNEL_DIR" || exit
+
+    mv -f "$KERNEL_DIR/work/$TARGET" "$DTBO_PATH"/*.img "$AK3_DIR"
+    find "$DTB_PATH"/vendor/*/* -name '*.dtb' -exec cat {} + > "$AK3_DIR/dtb"
+
+    if [[ $CONFIG_MODULES == "y" ]]; then
+        MOD_PATH="work/modules/lib/modules/$MOD_NAME"
+        sed -i 's/\(kernel\/[^: ]*\/\)\([^: ]*\.ko\)/\/vendor\/lib\/modules\/\2/g' "$MOD_PATH/modules.dep"
+        sed -i 's/.*\///g' "$MOD_PATH/modules.order"
+        if [[ $DRM_VENDOR_MODULE == "1" ]]; then
+            DRM_AS_MODULE=1
+            if [ ! -d "$AK3_DIR/vendor_ramdisk/lib/modules/" ]; then
+                VENDOR_RAMDISK_CREATE=1
+                mkdir -p "$AK3_DIR/vendor_ramdisk/lib/modules/"
+            fi
+            mv "$(find "$MOD_PATH" -name 'msm_drm.ko')" "$AKVRD"
+            grep drm "$MOD_PATH/modules.alias" > "$AKVRD/modules.alias"
+            grep drm "$MOD_PATH/modules.dep" | sed 's/^........//' > "$AKVRD/modules.dep"
+            grep drm "$MOD_PATH/modules.softdep" > "$AKVRD/modules.softdep"
+            grep drm "$MOD_PATH/modules.order" > "$AKVRD/modules.load"
+            sed -i s/split_boot/dump_boot/g "$AK3_DIR/anykernel.sh"
+        fi
+        cp $(find "$MOD_PATH" -name '*.ko') "$AKVDR/"
+        cp "$MOD_PATH/modules."{alias,dep,softdep} "$AKVDR/"
+        cp "$MOD_PATH/modules.order" "$AKVDR/modules.load"
+    fi
+
+    LAST_COMMIT=$(git show -s --format=%s)
+    LAST_HASH=$(git rev-parse --short HEAD)
+
+    cd "$AK3_DIR" || exit
+
+    BUILD_TIME=$(date +"%d%m%Y-%H%M")
+    ZIPSIGNER_JAR=zipsigner-3.0.jar
+
+    zip -r9 "${ANYK_VERSION}-${BUILD_TIME}.zip" ./*
+    java -jar $ZIPSIGNER_JAR "${ANYK_VERSION}-${BUILD_TIME}.zip" "${ANYK_VERSION}-${BUILD_TIME}-signed.zip"
+
+    echo -e "  ${green}Success! Zip built and signed${white}"
+
+    make zip VERSION="$(echo "$CONFIG_LOCALVERSION" | cut -c 8-)" CUSTOM="$LAST_HASH"
+    if [ "$DRM_AS_MODULE" = "1" ]; then
+        [ "$VENDOR_RAMDISK_CREATE" = "1" ] && rm -rf "$AK3_DIR/vendor_ramdisk/"
+        sed -i s/'dump_boot; # skip unpack'/'split_boot; # skip unpack'/g "$AK3_DIR/anykernel.sh"
+    fi
+
+    echo -e "Kernel zip: $(pwd)/${greenish_yellow}${ANYK_VERSION}-${BUILD_TIME}-signed.zip${white}"
+
+    SHA=$(shasum "$(pwd)/${ANYK_VERSION}-${BUILD_TIME}-signed.zip" | cut -f 1 -d '/')
+    MD5=$(md5sum "$(pwd)/${ANYK_VERSION}-${BUILD_TIME}-signed.zip" | cut -f 1 -d '/')
+    echo -e "  MD5  : $MD5"
+    echo -e "  SHA1 : $SHA"
+
+    # Optional MEGA upload
+    echo -e "$yellow \n👉 Upload to MEGA? (y/n) [auto-no in 5s] $white"
+    read -t 5 -p "$(tput setaf 171) Enter your answer: " answer || { answer=n; }
+    if [[ $answer == "y" ]]; then
+        read -p "$(tput setaf 171) Email: " email
+        read -s -p "$(tput setaf 171) Password: " password
+        megaput "$(pwd)/${ANYK_VERSION}-${BUILD_TIME}-signed.zip" -u "$email" -p "$password"
+        countdown 3
+    fi
+
+    inform --force "
+    ***************Phone1-Kernel**************
+
+    CI         : $KBUILD_HOST
+    Core count : $(nproc)
+    Device     : $DEVICENAME
+    Codename   : $CODENAME
+    Compiler   : $C_NAME
+    Kernel Name: $MOD_NAME
+    Linux Ver  : $KERNEL_VERSION
+    Build Date : $(date +"%Y-%m-%d %H:%M")
+
+    ***********Last Commit Details***********
+
+    Last commit (name): $LAST_COMMIT
+    Last commit (hash): $LAST_HASH
+
+    *****************************************
+    "
+
+    cd "$KERNEL_DIR" || exit
+    success "Build completed in $((DIFF / 60)).$((DIFF % 60)) mins"
+}
+
+############################################################################
+#                            MAIN / ARGUMENT PARSING
+############################################################################
+
+export TZ=America/Sao_Paulo
+
+if [[ -z $* ]]; then
+    usage
+fi
+
+# Parse flags
+[[ $* =~ "--log" ]]     && LOG=1
+[[ $* =~ "--silence" ]] && MAKE_ARGS+=("-s") && SILENCE=1
+
+# Run setup steps (order matters)
+setup_environment
+setup_toolchain       # ← downloads sdclang19, sets PATH, LD_LIBRARY_PATH, MAKE_ARGS
+cleanup
+setup_anykernel
+generate_changelog
+ascii_art_logo
+
+# Parse main arguments
+for arg in "$@"; do
+    case "${arg}" in
+        "--device="*)
+            CODE_NAME=${arg#*=}
+            case $CODE_NAME in
+                lahaina)
+                    DEVICENAME='lahaina common qgki kernel'
+                    CODENAME='lahaina'
+                    SUFFIX='qgki'
+                    ;;
+                *)
+                    inform "Device not supported: falling back to manual config"
+                    read -rp 'DEVICENAME: ' DEVICENAME
+                    read -rp 'CODENAME: '   CODENAME
+                    read -rp 'SUFFIX: '     SUFFIX
+                    ;;
+            esac
+            ;;
+        "--clean")
+            BUILD='clean'
+            ;;
+        "--test")
+            TEST='1'
+            CODENAME=lahaina
+            ;;
+        "--dtb_zip")
+            DTB_ZIP=1
+            OBJ=dtbs
+            dtb_zip
+            ;;
+        "--dtbs")
+            OBJ=dtbs
+            dtb_zip
+            ;;
+        "--obj="*)
+            OBJ=${arg#*=}
+            obj_builder
+            ;;
+        "--regen")
+            config_regenerator
+            ;;
+        "--log" | "--silence")
+            ;;
+        *)
+            usage
+            ;;
+    esac
+done
+
+kernel_builder
+############################################################################
