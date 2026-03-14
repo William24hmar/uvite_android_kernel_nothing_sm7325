@@ -11,6 +11,10 @@ on:
         description: 'Defconfig name (without path)'
         required: true
         default: 'phone1_defconfig'
+      enable_resukisu:
+        description: 'Enable ReSukiSU root solution (yes/no)'
+        required: false
+        default: 'no'
 
 jobs:
   build:
@@ -64,6 +68,31 @@ jobs:
           # Kernel build metadata
           echo "KBUILD_BUILD_USER=William24hmar" >> $GITHUB_ENV
           echo "KBUILD_BUILD_HOST=GitHub-Actions" >> $GITHUB_ENV
+
+          # Extract Snapdragon compiler string (fallback to default)
+          COMPILER_STRING="$(${{ env.SDCLANG_PATH }}/bin/clang -v 2>&1 | grep -m1 'Snapdragon LLVM' | sed 's/^[[:space:]]*//')"
+          if [ -n "$COMPILER_STRING" ]; then
+            echo "KBUILD_COMPILER_STRING=$COMPILER_STRING" >> $GITHUB_ENV
+          else
+            echo "KBUILD_COMPILER_STRING=$(${{ env.SDCLANG_PATH }}/bin/clang --version | head -n1)" >> $GITHUB_ENV
+          fi
+
+      - name: Setup ReSukiSU (if enabled)
+        if: ${{ github.event.inputs.enable_resukisu == 'yes' }}
+        run: |
+          echo "🔧 Enabling ReSukiSU..."
+          
+          # Run the official setup script
+          curl -LSs "https://raw.githubusercontent.com/ReSukiSU/ReSukiSU/main/kernel/setup.sh" | bash
+          
+          # Enable KSU in defconfig
+          DEFCONFIG_PATH="arch/arm64/configs/${{ github.event.inputs.defconfig }}"
+          if [ -f "$DEFCONFIG_PATH" ]; then
+            echo "✅ Adding CONFIG_KSU=y to defconfig"
+            echo -e "\n# ReSukiSU\nCONFIG_KSU=y" >> "$DEFCONFIG_PATH"
+          else
+            echo "⚠️ Defconfig not found at $DEFCONFIG_PATH, please enable CONFIG_KSU manually"
+          fi
 
       - name: Configure kernel (defconfig)
         run: |
