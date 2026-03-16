@@ -462,13 +462,12 @@ done:
 
 static int show_map(struct seq_file *m, void *v)
 {
-	struct vm_area_struct *pad_vma = get_pad_vma(v);
-	struct vm_area_struct *vma = get_data_vma(v);
+	struct vm_area_struct *vma = (struct vm_area_struct *)v;
 
 	if (vma_pages(vma))
 		show_map_vma(m, vma);
 
-	show_map_pad_vma(vma, pad_vma, m, show_map_vma, false);
+	show_map_pad_vma(vma, m, show_map_vma, false);
 
 	m_cache_vma(m, v);
 	return 0;
@@ -973,13 +972,12 @@ bypass_orig_flow:
 
 static int show_smap(struct seq_file *m, void *v)
 {
-	struct vm_area_struct *pad_vma = get_pad_vma(v);
-	struct vm_area_struct *vma = get_data_vma(v);
+	struct vm_area_struct *vma = (struct vm_area_struct *)v;
 
 	if (vma_pages(vma))
 		show_smap_vma(m, vma);
 
-	show_map_pad_vma(vma, pad_vma, m, show_smap_vma, true);
+	show_map_pad_vma(vma, m, show_smap_vma, true);
 
 	m_cache_vma(m, v);
 	return 0;
