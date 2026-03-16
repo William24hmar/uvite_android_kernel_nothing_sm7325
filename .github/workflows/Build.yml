@@ -109,7 +109,7 @@ jobs:
         if: ${{ github.event.inputs.enable_resukisu == 'yes' }}
         run: |
           echo "🔧 Enabling ReSukiSU..."
-          curl -LSs "https://raw.githubusercontent.com/ReSukiSU/ReSukiSU/main/kernel/setup.sh" | bash
+          curl -LSs "https://raw.githubusercontent.com/ReSukiSU/ReSukiSU/main/kernel/setup.sh" | bash -s susfs-ksud
           DEFCONFIG_PATH="arch/arm64/configs/${{ github.event.inputs.defconfig }}"
           if [ -f "$DEFCONFIG_PATH" ]; then
             echo "✅ Adding CONFIG_KSU=y to defconfig"
