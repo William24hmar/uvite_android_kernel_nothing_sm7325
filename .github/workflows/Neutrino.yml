@@ -1,0 +1,59 @@
+name: Build Kernel with Android Kernel Build Action
+
+on:
+  workflow_dispatch:
+    inputs:
+      kernel_branch:
+        description: 'Branch to build'
+        required: true
+        default: 'AAOSPA-VX'
+      defconfig:
+        description: 'Defconfig name'
+        required: true
+        default: 'phone1_defconfig'
+      enable_resukisu:
+        description: 'Enable ReSukiSU (yes/no)'
+        required: false
+        default: 'no'
+
+jobs:
+  build-kernel:
+    name: Build Kernel
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout kernel source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.kernel_branch }}
+
+      - name: Build Kernel
+        uses: dabao1955/kernel_build_action@main
+        with:
+          kernel-url: https://github.com/William24hmar/uvite_android_kernel_nothing_sm7325
+          kernel-branch: ${{ github.event.inputs.kernel_branch }}
+          config: ${{ github.event.inputs.defconfig }}
+          arch: arm64
+          android-version: 12
+          
+          # Toolchain configuration
+          aosp-clang: false
+          other-clang-url: https://raw.githubusercontent.com/Neutron-Toolchains/antman/main/antman
+          aosp-gcc: true
+          
+          # Feature flags
+          ksu: ${{ github.event.inputs.enable_resukisu == 'yes' && 'true' || 'false' }}
+          ksu-other: ${{ github.event.inputs.enable_resukisu == 'yes' && 'true' || 'false' }}
+          ksu-url: https://github.com/ReSukiSU/ReSukiSU.git
+          
+          # Build optimizations
+          ccache: true
+          disable-lto: false
+          
+          # Packaging and release
+          anykernel3: true
+          anykernel3-url: https://github.com/William24hmar/AnyKernel3.git
+          release: true
+          access-token: ${{ secrets.GITHUB_TOKEN }}
+          
+          # Custom compiler string
+          extra-make-args: '["LOCALVERSION=-Neutrino", "KBUILD_COMPILER_STRING=Neutron clang 19.0.0 (https://github.com/llvm/llvm-project.git fd3eaf76)"]'
