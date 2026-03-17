@@ -1,0 +1,25 @@
+name: Build Spacewar Kernel
+
+on:
+  workflow_dispatch:
+
+jobs:
+  start_building:
+    runs-on: ubuntu-22.04
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: Fetch device tree
+      run: git clone https://github.com/NothingOSS/android_kernel_devicetree_nothing_sm7325 -b sm7325/v/mr --depth=1 arch/arm64/boot/dts/vendor
+
+    - name: Execute build script
+      run: bash ./build.sh
+
+    - name: Release
+      uses: softprops/action-gh-release@v1
+      with:
+        body: Test
+        tag_name: github_run
+        name: Spacewar kernel
+        files: |
+           Resukisu_Spacewar_NOS3.2_Kernel.zip

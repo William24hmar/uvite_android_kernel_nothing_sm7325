@@ -1,0 +1,143 @@
+name: Build Kernel with EVA GCC
+
+on:
+  workflow_dispatch:
+    inputs:
+      kernel_branch:
+        description: 'Branch to build (e.g., 123)'
+        required: true
+        default: '123'
+      defconfig:
+        description: 'Defconfig name (without path)'
+        required: true
+        default: 'phone1_defconfig'
+      enable_resukisu:
+        description: 'Enable ReSukiSU (yes/no)'
+        required: false
+        default: 'no'
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04  # Use 24.04 for glibc 2.38 (required by EVA GCC)
+    steps:
+      - name: Checkout kernel source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.kernel_branch }}
+          fetch-depth: 1
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            bc bison flex libssl-dev make libelf-dev lz4 cpio \
+            build-essential device-tree-compiler python3 python3-pip zip git ccache \
+            ncurses-dev texinfo gcc gperf patch libtool automake g++ \
+            gawk expat libexpat1-dev binutils-dev libcap-dev autoconf \
+            libgmp-dev pkg-config libmpc-dev libmpfr-dev gettext \
+            liblzma-dev libssl-dev libz-dev wget tar gcc-10 g++-10 zstd \
+            cpio rsync
+
+      - name: Create toolchains directory
+        run: mkdir -p $HOME/toolchains
+
+      - name: Download and extract EVA GCC ARM64
+        run: |
+          set -e
+          cd $HOME/toolchains
+          wget -q --show-progress https://github.com/mvaisakh/gcc-build/releases/download/15032026/eva-gcc-arm64-15032026.xz
+          tar -xf eva-gcc-arm64-15032026.xz
+          # The tarball extracts to "gcc-arm64"
+          rm eva-gcc-arm64-15032026.xz
+          echo "GCC64_PATH=$HOME/toolchains/gcc-arm64" >> $GITHUB_ENV
+
+      - name: Download and extract EVA GCC ARM32
+        run: |
+          set -e
+          cd $HOME/toolchains
+          wget -q --show-progress https://github.com/mvaisakh/gcc-build/releases/download/15032026/eva-gcc-arm-15032026.xz
+          tar -xf eva-gcc-arm-15032026.xz
+          # The tarball extracts to "gcc-arm"
+          rm eva-gcc-arm-15032026.xz
+          echo "GCC32_PATH=$HOME/toolchains/gcc-arm" >> $GITHUB_ENV
+
+      - name: Set up environment for EVA GCC (Sakura style)
+        run: |
+          # Add toolchains to PATH
+          echo "${{ env.GCC64_PATH }}/bin" >> $GITHUB_PATH
+          echo "${{ env.GCC32_PATH }}/bin" >> $GITHUB_PATH
+
+          # Compiler paths (matching Sakura's compiler_setup for GCC)
+          echo "CC=${{ env.GCC64_PATH }}/bin/aarch64-elf-gcc" >> $GITHUB_ENV
+          echo "CROSS_COMPILE=aarch64-elf-" >> $GITHUB_ENV
+          echo "CROSS_COMPILE_COMPAT=${{ env.GCC32_PATH }}/bin/arm-eabi-" >> $GITHUB_ENV
+          echo "CC_COMPAT=${{ env.GCC32_PATH }}/bin/arm-eabi-gcc" >> $GITHUB_ENV
+          
+          # Optimization flags from Sakura (for GCC builds)
+          echo "GCC_LTO=1" >> $GITHUB_ENV
+          echo "GRAPHITE=1" >> $GITHUB_ENV
+
+          # Kernel build metadata
+          echo "KBUILD_BUILD_USER=Willay" >> $GITHUB_ENV
+          echo "KBUILD_BUILD_HOST=Linux" >> $GITHUB_ENV
+
+          # Architecture
+          echo "ARCH=arm64" >> $GITHUB_ENV
+
+      - name: Setup ReSukiSU (if enabled)
+        if: ${{ github.event.inputs.enable_resukisu == 'yes' }}
+        run: |
+          echo "🔧 Enabling ReSukiSU..."
+          curl -LSs "https://raw.githubusercontent.com/ReSukiSU/ReSukiSU/main/kernel/setup.sh" | bash -s susfs-ksud
+          DEFCONFIG_PATH="arch/arm64/configs/${{ github.event.inputs.defconfig }}"
+          if [ -f "$DEFCONFIG_PATH" ]; then
+            echo "✅ Adding CONFIG_KSU=y to defconfig"
+            echo -e "\n# ReSukiSU\nCONFIG_KSU=y" >> "$DEFCONFIG_PATH"
+          fi
+
+      - name: Configure kernel (with savedefconfig)
+        run: |
+          # Use work/ as output dir (like Sakura)
+          mkdir -p work
+          make O=work ${{ github.event.inputs.defconfig }}
+          # Regenerate defconfig (optional, but Sakura does it)
+          make O=work savedefconfig
+          cp work/defconfig arch/arm64/configs/${{ github.event.inputs.defconfig }} || true
+
+      - name: Apply DTB overlay support
+        run: |
+          cd work
+          ../scripts/config --file .config -e BUILD_ARM64_DT_OVERLAY
+          make olddefconfig
+          cd ..
+
+      - name: Build kernel
+        run: |
+          make O=work -j$(nproc --all)
+
+      - name: Prepare DTB files
+        run: |
+          mkdir -p anykernel
+          find work/arch/arm64/boot/dts/vendor/qcom -name "*.dtb*" -exec cp {} anykernel/ \;
+
+      - name: Prepare AnyKernel3 package
+        run: |
+          git clone --depth=1 https://github.com/William24hmar/AnyKernel3.git -b master anykernel-temp
+          cp work/arch/arm64/boot/Image anykernel-temp/
+          [ -f anykernel/*.dtb ] && cp anykernel/*.dtb anykernel-temp/ || true
+          [ -f work/arch/arm64/boot/dtbo.img ] && cp work/arch/arm64/boot/dtbo.img anykernel-temp/ || true
+          mv anykernel-temp anykernel
+
+      - name: Create flashable ZIP
+        run: |
+          cd anykernel
+          ZIP_NAME="Neutrino-GCC-$(date +%Y%m%d-%H%M).zip"
+          zip -r9 "../$ZIP_NAME" * -x "*.git*" "README.md"
+          cd ..
+          echo "ZIP_FILE=$ZIP_NAME" >> $GITHUB_ENV
+
+      - name: Upload ZIP as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Kernel-flashable-GCC
+          path: ${{ env.ZIP_FILE }}

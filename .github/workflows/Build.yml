@@ -1,0 +1,136 @@
+name: Build Kernel with Neutron Clang
+
+on:
+  workflow_dispatch:
+    inputs:
+      kernel_branch:
+        description: 'Branch to build (e.g., AAOSPA-VX)'
+        required: true
+        default: 'AAOSPA-VX'
+      defconfig:
+        description: 'Defconfig name (without path)'
+        required: true
+        default: 'phone1_defconfig'
+      enable_resukisu:
+        description: 'Enable ReSukiSU root solution (yes/no)'
+        required: false
+        default: 'no'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout kernel source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.kernel_branch }}
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            bc bison flex libssl-dev make libelf-dev lz4 cpio \
+            gcc-aarch64-linux-gnu gcc-arm-linux-gnueabi \
+            build-essential clang lld llvm device-tree-compiler \
+            python3 python3-pip zip git ccache wget xz-utils zstd
+
+      - name: Download and setup Neutron Clang with antman
+        run: |
+          set -e
+          echo "Cleaning old neutron-clang directory..."
+          rm -rfv "$GITHUB_WORKSPACE/neutron-clang"
+          mkdir -p "$GITHUB_WORKSPACE/neutron-clang"
+          cd "$GITHUB_WORKSPACE/neutron-clang"
+          
+          echo "Downloading antman script..."
+          curl -LO "https://raw.githubusercontent.com/Neutron-Toolchains/antman/main/antman"
+          chmod +x antman
+          
+          echo "Syncing latest Neutron Clang build (this may take a while)..."
+          ./antman -S
+          
+          echo "Applying glibc compatibility patch (if needed)..."
+          ./antman -P=glibc || true
+          
+          echo "NEUTRON_PATH=$GITHUB_WORKSPACE/neutron-clang" >> $GITHUB_ENV
+
+      - name: Set up environment for Neutron Clang
+        run: |
+          # Add Neutron Clang binaries to PATH
+          echo "${{ env.NEUTRON_PATH }}/bin" >> $GITHUB_PATH
+
+          # Set LD_LIBRARY_PATH for Neutron's libraries
+          if [ -d "${{ env.NEUTRON_PATH }}/lib64" ]; then
+            echo "LD_LIBRARY_PATH=${{ env.NEUTRON_PATH }}/lib64" >> $GITHUB_ENV
+          elif [ -d "${{ env.NEUTRON_PATH }}/lib" ]; then
+            echo "LD_LIBRARY_PATH=${{ env.NEUTRON_PATH }}/lib" >> $GITHUB_ENV
+          fi
+
+          # Kernel build metadata
+          echo "KBUILD_BUILD_USER=Willay" >> $GITHUB_ENV
+          echo "KBUILD_BUILD_HOST=Linux" >> $GITHUB_ENV
+
+          # Extract clang version and set custom compiler string (as requested)
+          CLANG_VERSION=$(${{ env.NEUTRON_PATH }}/bin/clang --version | head -n1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+')
+          COMPILER_STRING="Neutron clang version ${CLANG_VERSION} (https://github.com/llvm/llvm-project.git fd3eaf76ba3392a4406247d996e757ef49f7a8b2), Neutron LLD ${CLANG_VERSION})"
+          echo "KBUILD_COMPILER_STRING=$COMPILER_STRING" >> $GITHUB_ENV
+
+      - name: Setup ReSukiSU (if enabled)
+        if: ${{ github.event.inputs.enable_resukisu == 'yes' }}
+        run: |
+          echo "🔧 Enabling ReSukiSU..."
+          curl -LSs "https://raw.githubusercontent.com/ReSukiSU/ReSukiSU/main/kernel/setup.sh" | bash -s susfs-ksud
+          DEFCONFIG_PATH="arch/arm64/configs/${{ github.event.inputs.defconfig }}"
+          if [ -f "$DEFCONFIG_PATH" ]; then
+            echo "✅ Adding CONFIG_KSU=y to defconfig"
+            echo -e "\n# ReSukiSU\nCONFIG_KSU=y" >> "$DEFCONFIG_PATH"
+          else
+            echo "⚠️ Defconfig not found at $DEFCONFIG_PATH, please enable CONFIG_KSU manually"
+          fi
+
+      - name: Configure kernel (defconfig)
+        run: |
+          make ARCH=arm64 \
+               CC=clang \
+               CLANG_TRIPLE=aarch64-linux-gnu- \
+               CROSS_COMPILE=aarch64-linux-gnu- \
+               CROSS_COMPILE_ARM32=arm-linux-gnueabi- \
+               HOSTCC=clang HOSTCXX=clang++ \
+               LLVM=1 LLVM_IAS=1 \
+               KCFLAGS="-Wno-unknown-warning-option" \
+               O=out \
+               ${{ github.event.inputs.defconfig }}
+
+      - name: Build kernel
+        run: |
+          make ARCH=arm64 \
+               CC=clang \
+               CLANG_TRIPLE=aarch64-linux-gnu- \
+               CROSS_COMPILE=aarch64-linux-gnu- \
+               CROSS_COMPILE_ARM32=arm-linux-gnueabi- \
+               HOSTCC=clang HOSTCXX=clang++ \
+               LLVM=1 LLVM_IAS=1 \
+               KCFLAGS="-Wno-unknown-warning-option" \
+               O=out \
+               -j$(nproc --all)
+
+      - name: Prepare AnyKernel3 package
+        run: |
+          git clone --depth=1 https://github.com/William24hmar/AnyKernel3.git -b master anykernel
+          cp out/arch/arm64/boot/Image anykernel/
+          [ -f out/arch/arm64/boot/dtb ] && cp out/arch/arm64/boot/dtb anykernel/ || true
+          [ -f out/arch/arm64/boot/dtbo.img ] && cp out/arch/arm64/boot/dtbo.img anykernel/ || true
+
+      - name: Create flashable ZIP
+        run: |
+          cd anykernel
+          ZIP_NAME="Neutrino-$(date +%Y%m%d-%H%M).zip"
+          zip -r9 "../$ZIP_NAME" * -x "*.git*" "README.md"
+          cd ..
+          echo "ZIP_FILE=$ZIP_NAME" >> $GITHUB_ENV
+
+      - name: Upload ZIP as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Neutrino-Kernel-flashable
+          path: ${{ env.ZIP_FILE }}
