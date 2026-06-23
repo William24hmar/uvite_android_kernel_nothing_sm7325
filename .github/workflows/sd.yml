@@ -1,0 +1,189 @@
+name: Build Kernel with SDclang + GNU Toolchain
+
+on:
+  workflow_dispatch:
+    inputs:
+      kernel_branch:
+        description: 'Branch to build (e.g., AAOSPA-VX)'
+        required: true
+        default: 'AAOSPA-VX'
+      defconfig:
+        description: 'Defconfig name (without path)'
+        required: true
+        default: 'vendor/lahaina-qgki_defconfig'
+      su_variant:
+        description: 'Root solution to integrate (none / KernelSU / ReSukiSU)'
+        required: false
+        default: 'none'
+        type: choice
+        options:
+          - none
+          - KernelSU
+          - ReSukiSU
+      disable_lto:
+        description: 'Disable LTO (yes/no) – helps with some clang 19 errors'
+        required: false
+        default: 'no'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout kernel source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.kernel_branch }}
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            bc bison flex libssl-dev make libelf-dev lz4 cpio \
+            gcc-aarch64-linux-gnu gcc-arm-linux-gnueabi \
+            build-essential clang lld llvm device-tree-compiler \
+            python3 python3-pip zip git ccache wget
+
+      - name: Download and extract SDclang 19
+        run: |
+          set -e
+          echo "Cleaning old sdclang directory..."
+          rm -rfv "$GITHUB_WORKSPACE/sdclang"
+          mkdir -p "$GITHUB_WORKSPACE/sdclang"
+
+          echo "Downloading SDclang 19..."
+          wget -O sdclang19.tgz https://github.com/khuza08/snapdragon-clang/releases/download/sdclang-19.0.0-release/sdclang19.tgz
+          if [ ! -f sdclang19.tgz ]; then
+            echo "Download failed!"
+            exit 1
+          fi
+
+          echo "Extracting (no stripping)..."
+          tar -xvf sdclang19.tgz -C "$GITHUB_WORKSPACE/sdclang"
+          rm -f sdclang19.tgz
+          echo "SDCLANG_PATH=$GITHUB_WORKSPACE/sdclang" >> $GITHUB_ENV
+
+      - name: Download and extract ARM GNU Toolchain (14.2.rel1)
+        run: |
+          set -e
+          echo "Cleaning old gnu-toolchain directory..."
+          rm -rfv "$GITHUB_WORKSPACE/gnu-toolchain"
+          mkdir -p "$GITHUB_WORKSPACE/gnu-toolchain"
+
+          echo "Downloading ARM GNU Toolchain..."
+          wget -O gnu-toolchain.tar.xz https://developer.arm.com/-/media/Files/downloads/gnu/14.2.rel1/binrel/arm-gnu-toolchain-14.2.rel1-x86_64-aarch64-none-linux-gnu.tar.xz
+          tar -xf gnu-toolchain.tar.xz -C "$GITHUB_WORKSPACE/gnu-toolchain" --strip-components=1
+          rm -f gnu-toolchain.tar.xz
+          echo "GNU_TOOLCHAIN_PATH=$GITHUB_WORKSPACE/gnu-toolchain" >> $GITHUB_ENV
+
+      - name: Set up environment for SDclang and GNU toolchain
+        run: |
+          # Add SDclang binaries to PATH
+          echo "${{ env.SDCLANG_PATH }}/bin" >> $GITHUB_PATH
+
+          # Add GNU toolchain binaries to PATH (so that aarch64-none-linux-gnu-* are available)
+          echo "${{ env.GNU_TOOLCHAIN_PATH }}/bin" >> $GITHUB_PATH
+
+          # Set LD_LIBRARY_PATH for SDclang
+          if [ -d "${{ env.SDCLANG_PATH }}/lib64" ]; then
+            echo "LD_LIBRARY_PATH=${{ env.SDCLANG_PATH }}/lib64" >> $GITHUB_ENV
+          elif [ -d "${{ env.SDCLANG_PATH }}/lib" ]; then
+            echo "LD_LIBRARY_PATH=${{ env.SDCLANG_PATH }}/lib" >> $GITHUB_ENV
+          fi
+
+          # Kernel build metadata
+          echo "KBUILD_BUILD_USER=Willay" >> $GITHUB_ENV
+          echo "KBUILD_BUILD_HOST=Linux" >> $GITHUB_ENV
+
+          # Extract clang version and set custom compiler string
+          CLANG_VERSION=$(${{ env.SDCLANG_PATH }}/bin/clang --version | head -n1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+')
+          COMPILER_STRING="Snapdragon clang ${CLANG_VERSION} (https://github.com/llvm/llvm-project.git), (SDLLVM ${CLANG_VERSION} is based on LLVM 19.1.0-rc4)"
+          echo "KBUILD_COMPILER_STRING=$COMPILER_STRING" >> $GITHUB_ENV
+
+      - name: Setup root solution (KernelSU / ReSukiSU)
+        if: ${{ github.event.inputs.su_variant != 'none' }}
+        run: |
+          VARIANT="${{ github.event.inputs.su_variant }}"
+          DEFCONFIG_PATH="arch/arm64/configs/${{ github.event.inputs.defconfig }}"
+          echo "🔧 Root variant selected: $VARIANT"
+
+          if [ "$VARIANT" = "KernelSU" ]; then
+            echo "── KernelSU setup ──────────────────────────────────────────"
+            # Step 1: Run the official tiann KernelSU setup script
+            curl -LSs "https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/setup.sh" | bash -
+            # Step 2: Remove the KernelSU folder created by the setup script
+            rm -rf KernelSU
+            # Step 3: Clone backslashxx's KernelSU fork (shockwave branch)
+            git clone -b shockwave https://github.com/MrShockWAVEog/KernelSU.git KernelSU
+            echo "✅ KernelSU (backslashxx/shockwave) ready"
+
+          elif [ "$VARIANT" = "ReSukiSU" ]; then
+            echo "── ReSukiSU setup ──────────────────────────────────────────"
+            curl -LSs "https://raw.githubusercontent.com/ReSukiSU/ReSukiSU/main/kernel/setup.sh" | bash -
+            echo "✅ ReSukiSU ready"
+          fi
+
+          # Inject CONFIG_KSU=y — shared by both variants
+          if [ -f "$DEFCONFIG_PATH" ]; then
+            echo "✅ Injecting CONFIG_KSU=y into defconfig ($DEFCONFIG_PATH)"
+            echo -e "\n# $VARIANT\nCONFIG_KSU=y" >> "$DEFCONFIG_PATH"
+          else
+            echo "⚠️  Defconfig not found at $DEFCONFIG_PATH — skipping CONFIG_KSU injection"
+          fi
+
+      - name: Configure kernel (defconfig)
+        run: |
+          make ARCH=arm64 \
+               CC=clang \
+               CLANG_TRIPLE=aarch64-linux-gnu- \
+               CROSS_COMPILE=aarch64-none-linux-gnu- \
+               CROSS_COMPILE_ARM32=arm-linux-gnueabi- \
+               HOSTCC=gcc HOSTCXX=g++ \
+               LLVM=1 LLVM_IAS=1 \
+               KCFLAGS="-Wno-unknown-warning-option" \
+               O=out \
+               ${{ github.event.inputs.defconfig }}
+
+      - name: Disable LTO (if requested)
+        if: ${{ github.event.inputs.disable_lto == 'yes' }}
+        run: |
+          echo "⚙️ Disabling LTO in .config..."
+          cd out
+          scripts/config --file .config -d LTO_CLANG -e LTO_NONE
+          make olddefconfig
+          cd ..
+          echo "✅ LTO disabled"
+
+      - name: Build kernel
+        run: |
+          make ARCH=arm64 \
+               CC=clang \
+               CLANG_TRIPLE=aarch64-linux-gnu- \
+               CROSS_COMPILE=aarch64-none-linux-gnu- \
+               CROSS_COMPILE_ARM32=arm-linux-gnueabi- \
+               HOSTCC=gcc HOSTCXX=g++ \
+               LLVM=1 LLVM_IAS=1 \
+               KCFLAGS="-Wno-unknown-warning-option" \
+               O=out \
+               -j$(nproc --all)
+
+      - name: Prepare AnyKernel3 package
+        run: |
+          git clone --depth=1 https://github.com/William24hmar/AnyKernel3.git -b master anykernel
+          cp out/arch/arm64/boot/Image anykernel/
+          [ -f out/arch/arm64/boot/dtb ] && cp out/arch/arm64/boot/dtb anykernel/ || true
+          [ -f out/arch/arm64/boot/dtbo.img ] && cp out/arch/arm64/boot/dtbo.img anykernel/ || true
+
+      - name: Create flashable ZIP
+        run: |
+          cd anykernel
+          ZIP_NAME="Neutrino-$(date +%Y%m%d-%H%M).zip"
+          zip -r9 "../$ZIP_NAME" * -x "*.git*" "README.md"
+          cd ..
+          echo "ZIP_FILE=$ZIP_NAME" >> $GITHUB_ENV
+
+      - name: Upload ZIP as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Kernel-Snapdragonclang-Build
+          path: ${{ env.ZIP_FILE }}
+          
