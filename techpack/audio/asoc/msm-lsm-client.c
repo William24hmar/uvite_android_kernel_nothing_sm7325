@@ -34,7 +34,7 @@
 #define CAPTURE_MIN_PERIOD_SIZE     320
 #define LISTEN_MAX_STATUS_PAYLOAD_SIZE 256
 
-#define WAKELOCK_TIMEOUT	2000
+#define WAKELOCK_TIMEOUT	500
 
 #define LAB_BUFFER_ALLOC 1
 #define LAB_BUFFER_DEALLOC 0
@@ -829,13 +829,6 @@ static int msm_lsm_reg_model(struct snd_pcm_substream *substream,
 		}
 
 		q6lsm_sm_set_param_data(client, p_info, &offset, sm);
-
-		if ((sm->size - offset) < p_info->param_size) {
-			dev_err(rtd->dev, "%s: user buff size is greater than expected\n",
-				__func__);
-			rc = -EINVAL;
-			goto err_copy;
-		}
 
 		/*
 		 * For set_param, advance the sound model data with the

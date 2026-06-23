@@ -2965,8 +2965,11 @@ static int msm_compr_trigger(struct snd_compr_stream *cstream, int cmd)
 				msm_compr_send_buffer(prtd);
 			}
 		} else {
+
 				pr_err("%s: fail to send partial buffer to dsp\n",__func__);
+
 				rc = -EPERM;
+
 		}
 
 		atomic_set(&prtd->drain, 1);
