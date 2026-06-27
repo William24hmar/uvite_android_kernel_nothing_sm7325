@@ -170,7 +170,7 @@ jobs:
             # Step 2: Remove the KernelSU folder created by the setup script
             rm -rf KernelSU
             # Step 3: Clone backslashxx's KernelSU fork (shockwave branch)
-            git clone -b shockwave https://github.com/MrShockWAVEog/KernelSU.git KernelSU
+            git clone -b master https://github.com/William24hmar/KernelSU.git
             echo "✅ KernelSU (backslashxx/shockwave) ready"
 
           elif [ "$VARIANT" = "ReSukiSU" ]; then
