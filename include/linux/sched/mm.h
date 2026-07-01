@@ -412,8 +412,8 @@ extern void membarrier_update_current_mm(struct mm_struct *next_mm);
 #else
 #ifdef CONFIG_ARCH_HAS_MEMBARRIER_CALLBACKS
 static inline void membarrier_arch_switch_mm(struct mm_struct *prev,
-					     struct mm_struct *next,
-					     struct task_struct *tsk)
+                                             struct mm_struct *next,
+                                             struct task_struct *tsk)
 {
 }
 #endif
