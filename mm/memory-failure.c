@@ -1543,9 +1543,10 @@ int unpoison_memory(unsigned long pfn)
 	static DEFINE_RATELIMIT_STATE(unpoison_rs, DEFAULT_RATELIMIT_INTERVAL,
 					DEFAULT_RATELIMIT_BURST);
 
-	p = pfn_to_online_page(pfn);
-	if (!p)
-		return -EIO;
+	if (!pfn_valid(pfn))
+		return -ENXIO;
+
+	p = pfn_to_page(pfn);
 	page = compound_head(p);
 
 	if (!PageHWPoison(p)) {
