@@ -6,8 +6,6 @@
  *
  *  Copyright (C) 1991-2002  Linus Torvalds
  */
-#include <linux/lrng.h>
-
 #include "sched.h"
 
 #include <linux/nospec.h>
@@ -3427,8 +3425,6 @@ ttwu_stat(struct task_struct *p, int cpu, int wake_flags)
 {
 	struct rq *rq;
 
-	add_sched_randomness(p, cpu);
-
 	if (!schedstat_enabled())
 		return;
 
@@ -4995,7 +4991,6 @@ context_switch(struct rq *rq, struct task_struct *prev,
 		 * finish_task_switch()'s mmdrop().
 		 */
 		switch_mm_irqs_off(prev->active_mm, next->mm, next);
-		lru_gen_use_mm(next->mm);
 
 		if (!prev->mm) {                        // from kernel
 			/* will mmdrop() in finish_task_switch(). */
